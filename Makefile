@@ -6,3 +6,6 @@ down:
 
 logs:
 	docker-compose -f docker/docker-compose.yml --env-file .env logs -f
+
+ps:
+	docker-compose -f docker/docker-compose.yml ps
