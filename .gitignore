@@ -1,0 +1,9 @@
+venv/
+.env
+data/raw/
+data/generated/
+__pycache__/
+*.pyc
+.pytest_cache/
+dbt_project/target/
+dbt_project/dbt_packages/
