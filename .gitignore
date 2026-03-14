@@ -7,3 +7,4 @@ __pycache__/
 .pytest_cache/
 dbt_project/target/
 dbt_project/dbt_packages/
+commands.sh
