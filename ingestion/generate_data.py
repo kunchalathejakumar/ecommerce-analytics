@@ -362,6 +362,17 @@ def main(argv: List[str] | None = None) -> None:
     args = parse_args(argv)
     volumes = get_volumes(full=args.full)
 
+    print("Starting synthetic data generation...")
+    print(f"  Mode        : {'FULL' if args.full else 'TEST'}")
+    print(f"  Output dir  : {Path(args.output_dir).resolve()}")
+    print(
+        "  Volumes     : "
+        f"orders={volumes.orders:,}, "
+        f"order_items={volumes.order_items:,}, "
+        f"products={volumes.products:,}, "
+        f"customers={volumes.customers:,}"
+    )
+
     base_output = Path(args.output_dir)
     ensure_output_dir(base_output)
 
@@ -372,9 +383,15 @@ def main(argv: List[str] | None = None) -> None:
     orders_path = base_output / "orders.csv"
     order_items_path = base_output / "order_items.csv"
 
+    print("\n[1/3] Generating customers.csv...")
     generate_customers_csv(customers_path, volumes.customers, faker)
-    generate_products_csv(products_path, volumes.products, faker)
+    print("Completed customers.csv")
 
+    print("\n[2/3] Generating products.csv...")
+    generate_products_csv(products_path, volumes.products, faker)
+    print("Completed products.csv")
+
+    print("\n[3/3] Generating orders.csv and order_items.csv...")
     generate_orders_and_items_csv(
         orders_path=orders_path,
         order_items_path=order_items_path,
@@ -384,6 +401,8 @@ def main(argv: List[str] | None = None) -> None:
         products_n=volumes.products,
         faker=faker,
     )
+    print("Completed orders.csv and order_items.csv")
+    print("\nData generation finished.")
 
 
 if __name__ == "__main__":
