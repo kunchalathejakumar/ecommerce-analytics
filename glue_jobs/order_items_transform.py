@@ -130,6 +130,27 @@ def transform_order_items(
     else:
         order_items_df = order_items_df.withColumn("discount_double", F.lit(None).cast("double"))
 
+    # Ensure partition fields year/month exist on orders_ref_df (defensive)
+    if ("year" not in orders_ref_df.columns) or ("month" not in orders_ref_df.columns):
+        if "order_date" in orders_ref_df.columns:
+            orders_ref_df = orders_ref_df.withColumn(
+                "order_date_cast", F.to_date(F.col("order_date"))
+            )
+            orders_ref_df = orders_ref_df.withColumn(
+                "year", F.year(F.col("order_date_cast"))
+            ).withColumn(
+                "month", F.month(F.col("order_date_cast"))
+            )
+        elif "order_timestamp" in orders_ref_df.columns:
+            orders_ref_df = orders_ref_df.withColumn(
+                "order_date_cast", F.to_date(F.col("order_timestamp"))
+            )
+            orders_ref_df = orders_ref_df.withColumn(
+                "year", F.year(F.col("order_date_cast"))
+            ).withColumn(
+                "month", F.month(F.col("order_date_cast"))
+            )
+
     # Deduplicate on (order_id, item_id)
     if {"order_id", "item_id"}.issubset(set(order_items_df.columns)):
         order_items_df = order_items_df.dropDuplicates(["order_id", "item_id"])
