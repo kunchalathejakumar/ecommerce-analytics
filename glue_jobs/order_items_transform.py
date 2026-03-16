@@ -63,7 +63,7 @@ def read_orders(glue_context: GlueContext, orders_path: str) -> DynamicFrame:
     return glue_context.create_dynamic_frame.from_options(
         connection_type="s3",
         connection_options={"paths": [orders_path], "recurse": True},
-        format="glueparquet",
+        format="parquet",
         transformation_ctx="orders_ref_source",
     )
 
@@ -76,7 +76,7 @@ def read_products(glue_context: GlueContext, products_path: str) -> DynamicFrame
     return glue_context.create_dynamic_frame.from_options(
         connection_type="s3",
         connection_options={"paths": [products_path], "recurse": True},
-        format="glueparquet",
+        format="parquet",
         transformation_ctx="products_ref_source",
     )
 
@@ -284,7 +284,7 @@ def write_clean(
             "path": s3_output_path,
             "partitionKeys": ["year", "month"],
         },
-        format="glueparquet",
+        format="parquet",
         format_options={"compression": "snappy"},
         transformation_ctx="clean_order_items_sink",
     )
@@ -311,7 +311,7 @@ def write_quarantine(
         connection_options={
             "path": s3_quarantine_path,
         },
-        format="glueparquet",
+        format="parquet",
         format_options={"compression": "snappy"},
         transformation_ctx="quarantine_order_items_sink",
     )

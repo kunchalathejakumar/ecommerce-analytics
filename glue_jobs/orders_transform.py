@@ -66,7 +66,7 @@ def read_customers(glue_context: GlueContext, customers_path: str) -> DynamicFra
             "paths": [customers_path],
             "recurse": True,
         },
-        format="glueparquet",
+        format="parquet",
         transformation_ctx="customers_source",
     )
 
@@ -243,7 +243,7 @@ def write_clean(
             "path": s3_output_path,
             "partitionKeys": ["year", "month"],
         },
-        format="glueparquet",
+        format="parquet",
         format_options={"compression": "snappy"},
         transformation_ctx="clean_sink",
     )
@@ -270,7 +270,7 @@ def write_quarantine(
         connection_options={
             "path": s3_quarantine_path,
         },
-        format="glueparquet",
+        format="parquet",
         format_options={"compression": "snappy"},
         transformation_ctx="quarantine_sink",
     )

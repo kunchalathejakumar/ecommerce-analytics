@@ -213,7 +213,7 @@ def write_clean(
         connection_options={
             "path": s3_output_path,
         },
-        format="glueparquet",
+        format="parquet",
         format_options={"compression": "snappy"},
         transformation_ctx="clean_products_sink",
     )
@@ -240,7 +240,7 @@ def write_quarantine(
         connection_options={
             "path": s3_quarantine_path,
         },
-        format="glueparquet",
+        format="parquet",
         format_options={"compression": "snappy"},
         transformation_ctx="quarantine_products_sink",
     )
