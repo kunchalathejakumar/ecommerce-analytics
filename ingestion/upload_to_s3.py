@@ -12,6 +12,8 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from dotenv import load_dotenv
 
+from ingestion.upload_logs import upload_logs_to_s3
+
 
 DATE_FORMAT = "%Y-%m-%d"
 
@@ -257,10 +259,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         csv_files = iter_csv_files(raw_dir)
     except FileNotFoundError as exc:
         logging.error("%s", exc)
+        # Even on early exit, try to push whatever logs exist.
+        upload_logs_to_s3()
         return
 
     if not csv_files:
         logging.info("No CSV files found in %s, nothing to upload.", raw_dir)
+        upload_logs_to_s3()
         return
 
     session_kwargs: Dict[str, Any] = {}
@@ -301,6 +306,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         logging.info("Manifest written to %s", manifest_path)
     except (ClientError, BotoCoreError) as exc:
         logging.error("Failed to write manifest: %s", exc)
+    finally:
+        # Upload the logs generated during this ingestion run to S3.
+        upload_logs_to_s3()
 
 
 if __name__ == "__main__":
