@@ -149,9 +149,10 @@ def transform_order_items(
 
     # Join with reference products to validate product_id
     products_ref_df = products_ref_df.select("product_id").dropDuplicates(["product_id"])
+    products_ref_df = products_ref_df.withColumnRenamed("product_id", "ref_product_id")
     order_items_df = order_items_df.join(
         products_ref_df,
-        on="product_id",
+        order_items_df.product_id == products_ref_df.ref_product_id,
         how="left",
     )
 
@@ -180,7 +181,7 @@ def transform_order_items(
 
     # Foreign key validations: order and product must exist in reference datasets
     missing_order_fk = order_items_df.year.isNull() & order_items_df.month.isNull()
-    missing_product_fk = products_ref_df.product_id.isNull()  # after join, this col is null if missing
+    missing_product_fk = F.col("ref_product_id").isNull()
 
     order_items_df = (
         order_items_df.withColumn("is_invalid_item_id", invalid_item_id)
@@ -244,6 +245,7 @@ def transform_order_items(
             "quantity_int",
             "unit_price_double",
             "discount_double",
+            "ref_product_id",
             "is_invalid_item_id",
             "is_invalid_order_id",
             "is_invalid_product_id",

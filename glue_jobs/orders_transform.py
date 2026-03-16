@@ -57,8 +57,8 @@ def read_orders(glue_context: GlueContext, s3_input_path: str) -> DynamicFrame:
 
 def read_customers(glue_context: GlueContext, customers_path: str) -> DynamicFrame:
     """
-    Read customers reference table from S3.
-    Assumes CSV with header and at least a customer_id column.
+    Read already processed customers dataset (Parquet) from S3.
+    Expected to contain at least a customer_id column.
     """
     return glue_context.create_dynamic_frame.from_options(
         connection_type="s3",
@@ -66,11 +66,7 @@ def read_customers(glue_context: GlueContext, customers_path: str) -> DynamicFra
             "paths": [customers_path],
             "recurse": True,
         },
-        format="csv",
-        format_options={
-            "withHeader": True,
-            "separator": ",",
-        },
+        format="glueparquet",
         transformation_ctx="customers_source",
     )
 
