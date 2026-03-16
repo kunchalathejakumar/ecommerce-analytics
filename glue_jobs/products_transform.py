@@ -260,7 +260,9 @@ def publish_metrics(
         float(quarantine_count) / float(input_count) if input_count > 0 else 0.0
     )
 
-    timestamp = datetime.utcnow()
+    from datetime import timezone
+
+    timestamp = datetime.now(timezone.utc)
     namespace = "EcommerceAnalytics/ProductsETL"
 
     metrics = [
