@@ -1,5 +1,6 @@
 import sys
 from datetime import datetime
+import logging
 
 import boto3
 from awsglue.context import GlueContext
@@ -336,6 +337,18 @@ def publish_metrics(
 def main() -> None:
     args = parse_arguments()
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+    logging.info("Starting orders_transform job %s", args["JOB_NAME"])
+    logging.info(
+        "Input: %s | Output: %s | Quarantine: %s",
+        args["S3_INPUT_PATH"],
+        args["S3_OUTPUT_PATH"],
+        args["S3_QUARANTINE_PATH"],
+    )
+
     sc = SparkContext.getOrCreate()
     glue_context = GlueContext(sc)
     job = Job(glue_context)
@@ -347,6 +360,7 @@ def main() -> None:
     clean_df, quarantine_df, input_count = transform_orders(
         orders_dyf, customers_dyf
     )
+    logging.info("Read %d order records", input_count)
 
     clean_count = write_clean(
         glue_context=glue_context,
@@ -360,6 +374,13 @@ def main() -> None:
         s3_quarantine_path=args["S3_QUARANTINE_PATH"],
     )
 
+    logging.info(
+        "Orders transform completed: clean=%d, quarantine=%d (rate=%.4f)",
+        clean_count,
+        quarantine_count,
+        float(quarantine_count) / float(input_count) if input_count else 0.0,
+    )
+
     publish_metrics(
         job_name=args["JOB_NAME"],
         input_count=input_count,
@@ -368,6 +389,7 @@ def main() -> None:
     )
 
     job.commit()
+    logging.info("Orders job %s committed successfully", args["JOB_NAME"])
 
 
 if __name__ == "__main__":
