@@ -1,5 +1,6 @@
 import argparse
 import os
+import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -9,8 +10,6 @@ import numpy as np
 from dotenv import load_dotenv
 from faker import Faker
 from tqdm import tqdm
-
-from ingestion.upload_logs import upload_logs_to_s3
 
 
 @dataclass
@@ -52,16 +51,14 @@ def sample_indices(n_rows: int, fraction: float) -> np.ndarray:
     return np.random.choice(n_rows, size=n, replace=False)
 
 
-def generate_customers_csv(path: Path, n_rows: int, faker: Faker) -> None:
+def generate_customers_csv(
+    path: Path, n_rows: int, faker: Faker, issue_rate: float
+) -> None:
     """
-    Generate customers.csv with required data issues.
+    Generate customers.csv.
 
-    Data issues:
-      - 3% duplicate emails with different IDs
-      - name with extra spaces or ALL CAPS for 10%
-      - 2% invalid email format
-      - 15% null segment
-      - country name inconsistency ('US','USA','United States')
+    The only quarantine-triggering issue is:
+      - `issue_rate` fraction of rows with invalid email format
     """
     rng = np.random.default_rng()
 
@@ -71,39 +68,17 @@ def generate_customers_csv(path: Path, n_rows: int, faker: Faker) -> None:
     last_names = np.array([faker.last_name() for _ in range(n_rows)])
     names = np.char.add(np.char.add(first_names, " "), last_names)
 
-    emails = np.array(
-        [faker.unique.email() for _ in range(int(n_rows * 1.03))], dtype=object
-    )
-    base_email_indices = rng.choice(emails.size, size=n_rows, replace=False)
-    emails = emails[base_email_indices]
-
-    dup_email_idx = sample_indices(n_rows, 0.03)
-    if dup_email_idx.size > 0:
-        src_idx = rng.choice(n_rows, size=dup_email_idx.size, replace=False)
-        emails[dup_email_idx] = emails[src_idx]
-
-    name_issue_idx = sample_indices(n_rows, 0.10)
-    for idx in name_issue_idx:
-        if rng.random() < 0.5:
-            names[idx] = f"  {names[idx]}  "
-        else:
-            names[idx] = str(names[idx]).upper()
+    emails = np.array([faker.unique.email() for _ in range(n_rows)], dtype=object)
 
     segments = np.array(
         [rng.choice(["Retail", "Wholesale", "Online", "Enterprise"]) for _ in range(n_rows)],
         dtype=object,
     )
-    segment_null_idx = sample_indices(n_rows, 0.15)
-    segments[segment_null_idx] = None
+    countries = np.array(["United States" for _ in range(n_rows)], dtype=object)
 
-    country_variants = ["US", "USA", "United States"]
-    countries = np.array(
-        [rng.choice(country_variants) for _ in range(n_rows)],
-        dtype=object,
-    )
-
-    invalid_email_idx = sample_indices(n_rows, 0.02)
+    invalid_email_idx = sample_indices(n_rows, issue_rate)
     for idx in invalid_email_idx:
+        # Ensure the email fails the simple regex used in `customers_transform.py`.
         emails[idx] = emails[idx].replace("@", "")[: max(1, len(emails[idx]) - 1)]
 
     with path.open("w", encoding="utf-8") as f:
@@ -119,14 +94,14 @@ def generate_customers_csv(path: Path, n_rows: int, faker: Faker) -> None:
             )
 
 
-def generate_products_csv(path: Path, n_rows: int, faker: Faker) -> None:
+def generate_products_csv(
+    path: Path, n_rows: int, faker: Faker, issue_rate: float
+) -> None:
     """
-    Generate products.csv with required issues.
+    Generate products.csv.
 
-    Data issues:
-      - 5% category typos ('Electornics','electroncs')
-      - 12% null cost_price
-      - 1% duplicate product_ids
+    The only quarantine-triggering issue is:
+      - `issue_rate` fraction of rows with non-positive cost_price
     """
     rng = np.random.default_rng()
 
@@ -150,27 +125,16 @@ def generate_products_csv(path: Path, n_rows: int, faker: Faker) -> None:
         dtype=object,
     )
 
-    typo_idx = sample_indices(n_rows, 0.05)
-    for idx in typo_idx:
-        if rng.random() < 0.5:
-            base_categories[idx] = "Electornics"
-        else:
-            base_categories[idx] = "electroncs"
-
     list_prices = np.round(
         rng.uniform(5.0, 500.0, size=n_rows).astype(float), 2
     )
-    cost_prices = list_prices * rng.uniform(0.4, 0.9, size=n_rows)
-    cost_prices = np.round(cost_prices, 2)
+    cost_prices = np.round(list_prices * rng.uniform(0.4, 0.9, size=n_rows), 2)
+    # Avoid triggering `price_below_cost_price` just from rounding errors.
+    cost_prices = np.minimum(cost_prices, list_prices - 0.01)
 
-    cost_null_idx = sample_indices(n_rows, 0.12)
-    cost_prices = cost_prices.astype(object)
-    cost_prices[cost_null_idx] = None
-
-    dup_idx = sample_indices(n_rows, 0.01)
-    if dup_idx.size > 0:
-        src_idx = rng.choice(product_ids.size, size=dup_idx.size, replace=False)
-        product_ids[dup_idx] = product_ids[src_idx]
+    invalid_product_idx = sample_indices(n_rows, issue_rate)
+    for idx in invalid_product_idx:
+        cost_prices[idx] = 0.0  # Triggers `invalid_cost_price` in products_transform.py
 
     with path.open("w", encoding="utf-8") as f:
         f.write("product_id,name,category,list_price,cost_price\n")
@@ -179,9 +143,8 @@ def generate_products_csv(path: Path, n_rows: int, faker: Faker) -> None:
             total=n_rows,
             desc="Generating products.csv",
         ):
-            cost_str = "" if cost_price is None else f"{cost_price:.2f}"
             f.write(
-                f"{pid},\"{name}\",{category},{list_price:.2f},{cost_str}\n"
+                f"{pid},\"{name}\",{category},{list_price:.2f},{cost_price:.2f}\n"
             )
 
 
@@ -193,52 +156,28 @@ def generate_orders_and_items_csv(
     customers_n: int,
     products_n: int,
     faker: Faker,
+    issue_rate: float,
 ) -> None:
     """
-    Generate orders.csv and order_items.csv with specified data issues.
+    Generate orders.csv and order_items.csv.
 
-    orders.csv issues:
-      - 2% duplicate order_ids
-      - date_ordered mixed formats
-      - status values in random case / variants
-      - total_amount as string with '$' and commas
-      - 8% null shipping_region
-      - 0.5% future-dated orders
-      - 3% orphan customer_ids not in customers table
-
-    order_items.csv issues:
-      - 1% duplicate item_ids
-      - 2% unit_price as 0 or negative
-      - 3% discount > 1.0
-      - quantity as float for 5% of rows
-      - 2% missing order_id
+    Quarantine should be driven primarily by:
+      - `issue_rate` fraction of orders referencing missing customers
+    Order_items remain "field-clean" and will be quarantined only due to missing
+    foreign-key references from quarantined orders/products.
     """
     rng = np.random.default_rng()
 
     order_ids = np.arange(1, orders_n + 1)
-    dup_order_idx = sample_indices(orders_n, 0.02)
-    if dup_order_idx.size > 0:
-        src_idx = rng.choice(order_ids.size, size=dup_order_idx.size, replace=False)
-        order_ids[dup_order_idx] = order_ids[src_idx]
-
     base_date = datetime.now() - timedelta(days=365)
     days_offsets = rng.integers(0, 365, size=orders_n)
     dates = np.array([base_date + timedelta(days=int(d)) for d in days_offsets])
 
-    future_idx = sample_indices(orders_n, 0.005)
-    for idx in future_idx:
-        dates[idx] = datetime.now() + timedelta(days=int(rng.integers(1, 60)))
+    # Use a single unambiguous date format so Athena/Spark parsing is stable.
+    date_strings = [d.strftime("%Y-%m-%d") for d in dates]
 
-    date_formats = ["%Y-%m-%d", "%d/%m/%Y", "%b %d %Y"]
-    date_strings: List[str] = []
-    for d in dates:
-        fmt = rng.choice(date_formats)
-        date_strings.append(d.strftime(fmt))
-
-    status_variants = ["completed", "COMPLETED", "Complete", "done", "shipped", "SHIPPED"]
-    statuses = np.array(
-        [rng.choice(status_variants) for _ in range(orders_n)], dtype=object
-    )
+    status_variants = ["completed", "shipped", "done"]
+    statuses = np.array([rng.choice(status_variants) for _ in range(orders_n)], dtype=object)
 
     shipping_regions = np.array(
         [
@@ -256,54 +195,32 @@ def generate_orders_and_items_csv(
         ],
         dtype=object,
     )
-    shipping_null_idx = sample_indices(orders_n, 0.08)
-    shipping_regions[shipping_null_idx] = None
 
     valid_customer_ids = np.arange(1, customers_n + 1)
     customer_ids = rng.choice(valid_customer_ids, size=orders_n, replace=True)
 
-    orphan_idx = sample_indices(orders_n, 0.03)
-    if orphan_idx.size > 0:
-        orphan_ids = customers_n + 1 + rng.integers(
-            1, customers_n, size=orphan_idx.size
-        )
-        customer_ids[orphan_idx] = orphan_ids
+    bad_orders_idx = sample_indices(orders_n, issue_rate)
+    for idx in bad_orders_idx:
+        customer_ids[idx] = customers_n + 1 + int(rng.integers(1, max(2, customers_n)))
 
-    total_amounts = rng.uniform(20.0, 1000.0, size=orders_n)
-    total_amount_strings = [
-        f"${amt:,.2f}" for amt in total_amounts
-    ]
+    # Keep total_amount parse-safe: no thousand separators => no CSV column-shifting surprises.
+    total_amounts = rng.uniform(20.0, 500.0, size=orders_n)
+    total_amount_strings = [f"${amt:.2f}" for amt in total_amounts]
 
     item_ids = np.arange(1, order_items_n + 1)
-    dup_item_idx = sample_indices(order_items_n, 0.01)
-    if dup_item_idx.size > 0:
-        src_idx = rng.choice(item_ids.size, size=dup_item_idx.size, replace=False)
-        item_ids[dup_item_idx] = item_ids[src_idx]
-
-    order_ids_for_items = rng.choice(order_ids, size=order_items_n, replace=True)
-    missing_order_idx = sample_indices(order_items_n, 0.02)
-    order_ids_for_items = order_ids_for_items.astype(object)
-    order_ids_for_items[missing_order_idx] = None
+    # Keep a stable 1-to-N mapping between orders and items (e.g., 3 items/order in this project).
+    items_per_order = order_items_n // orders_n if orders_n else 0
+    if orders_n > 0 and items_per_order * orders_n == order_items_n:
+        order_ids_for_items = np.repeat(order_ids, items_per_order)
+    else:
+        order_ids_for_items = rng.choice(order_ids, size=order_items_n, replace=True)
 
     product_ids_for_items = rng.integers(1, products_n + 1, size=order_items_n)
     unit_prices = rng.uniform(1.0, 500.0, size=order_items_n)
 
-    bad_price_idx = sample_indices(order_items_n, 0.02)
-    for idx in bad_price_idx:
-        if rng.random() < 0.5:
-            unit_prices[idx] = 0.0
-        else:
-            unit_prices[idx] = -abs(unit_prices[idx])
-
     discounts = rng.uniform(0.0, 0.5, size=order_items_n)
-    bad_discount_idx = sample_indices(order_items_n, 0.03)
-    discounts[bad_discount_idx] = rng.uniform(1.01, 2.0, size=bad_discount_idx.size)
 
-    quantities = rng.integers(1, 10, size=order_items_n).astype(float)
-    float_qty_idx = sample_indices(order_items_n, 0.05)
-    quantities[float_qty_idx] = quantities[float_qty_idx] + rng.uniform(
-        0.1, 0.9, size=float_qty_idx.size
-    )
+    quantities = rng.integers(1, 10, size=order_items_n)
 
     with orders_path.open("w", encoding="utf-8") as f_orders:
         f_orders.write(
@@ -314,9 +231,8 @@ def generate_orders_and_items_csv(
             total=orders_n,
             desc="Generating orders.csv",
         ):
-            region_val = "" if region is None else region
             f_orders.write(
-                f"{oid},{cid},{date_str},{status},{amount_str},{region_val}\n"
+                f"{oid},{cid},{date_str},{status},{amount_str},{region}\n"
             )
 
     with order_items_path.open("w", encoding="utf-8") as f_items:
@@ -335,9 +251,8 @@ def generate_orders_and_items_csv(
             total=order_items_n,
             desc="Generating order_items.csv",
         ):
-            order_val = "" if oid is None else oid
             f_items.write(
-                f"{iid},{order_val},{pid},{qty},{price:.2f},{disc:.4f}\n"
+                f"{iid},{oid},{pid},{qty},{price:.2f},{disc:.4f}\n"
             )
 
 
@@ -355,6 +270,14 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         default="data/generated",
         help="Output directory for generated CSV files (default: data/generated).",
     )
+    parser.add_argument(
+        "--issue-records-rate",
+        type=float,
+        default=None,
+        metavar="RATE",
+        help="Fraction of rows to inject quarantine-triggering issues (0..1). "
+        "If omitted, a random rate between 0%% and 5%% is chosen for this run.",
+    )
     return parser.parse_args(argv)
 
 
@@ -364,9 +287,17 @@ def main(argv: List[str] | None = None) -> None:
     args = parse_args(argv)
     volumes = get_volumes(full=args.full)
 
+    if args.issue_records_rate is None:
+        issue_rate = random.uniform(0.0, 0.05)
+        issue_rate_note = "random 0–5%"
+    else:
+        issue_rate = args.issue_records_rate
+        issue_rate_note = "--issue-records-rate"
+
     print("Starting synthetic data generation...")
     print(f"  Mode        : {'FULL' if args.full else 'TEST'}")
     print(f"  Output dir  : {Path(args.output_dir).resolve()}")
+    print(f"  Issue rate  : {issue_rate:.2%} ({issue_rate_note})")
     print(
         "  Volumes     : "
         f"orders={volumes.orders:,}, "
@@ -386,11 +317,15 @@ def main(argv: List[str] | None = None) -> None:
     order_items_path = base_output / "order_items.csv"
 
     print("\n[1/3] Generating customers.csv...")
-    generate_customers_csv(customers_path, volumes.customers, faker)
+    generate_customers_csv(
+        customers_path, volumes.customers, faker, issue_rate=issue_rate
+    )
     print("Completed customers.csv")
 
     print("\n[2/3] Generating products.csv...")
-    generate_products_csv(products_path, volumes.products, faker)
+    generate_products_csv(
+        products_path, volumes.products, faker, issue_rate=issue_rate
+    )
     print("Completed products.csv")
 
     print("\n[3/3] Generating orders.csv and order_items.csv...")
@@ -402,17 +337,10 @@ def main(argv: List[str] | None = None) -> None:
         customers_n=volumes.customers,
         products_n=volumes.products,
         faker=faker,
+        issue_rate=issue_rate,
     )
     print("Completed orders.csv and order_items.csv")
     print("\nData generation finished.")
-
-    # Upload any logs generated by ingestion scripts to S3.
-    # This relies on environment configuration and .env settings.
-    try:
-        upload_logs_to_s3()
-    except Exception as exc:  # pragma: no cover - best-effort log upload
-        print(f"Warning: failed to upload ingestion logs to S3: {exc}")
-
 
 if __name__ == "__main__":
     main()

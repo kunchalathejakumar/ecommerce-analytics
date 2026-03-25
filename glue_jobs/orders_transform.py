@@ -12,6 +12,18 @@ from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
 
+def drop_placeholder_columns(df):
+    """
+    Drop Glue CSV auto-generated placeholder columns like col0, col1, ... .
+    These are usually created when input rows have extra delimiters.
+    """
+    placeholder_cols = [c for c in df.columns if c.lower().startswith("col") and c[3:].isdigit()]
+    if placeholder_cols:
+        logging.warning("Dropping placeholder columns from orders input: %s", placeholder_cols)
+        return df.drop(*placeholder_cols)
+    return df
+
+
 def parse_arguments() -> dict:
     """
     Parse Glue job arguments.
@@ -82,6 +94,7 @@ def transform_orders(
     spark = orders_dyf.glue_ctx.spark_session
 
     orders_df = orders_dyf.toDF()
+    orders_df = drop_placeholder_columns(orders_df)
     customers_df = customers_dyf.toDF()
 
     # Some reference datasets might not have a customer_id column (or be empty).
