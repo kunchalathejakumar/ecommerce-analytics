@@ -77,7 +77,7 @@ def _upload_validation_log_to_s3(
         return None
 
     # Keep all validation run logs in one location for historical inspection.
-    key = f"logs/athena-validation-log/athena-validation-{run_timestamp}-{run_status}.log"
+    key = f"logs/athena-validation/athena-validation-{run_timestamp}-{run_status}.log"
     import boto3
 
     session_kwargs: Dict[str, Any] = {}
@@ -556,9 +556,9 @@ if __name__ == "__main__":
     run_timestamp = time.strftime("%Y%m%d-%H%M%S")
     run_status = "failed"
     region_name = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
-    log_file_path = os.path.join(
-        os.getcwd(), f"athena-validation-run-{run_timestamp}.log"
-    )
+    log_dir_path = os.path.join(os.getcwd(), "logs", "athena")
+    os.makedirs(log_dir_path, exist_ok=True)
+    log_file_path = os.path.join(log_dir_path, f"athena-validation-run-{run_timestamp}.log")
 
     with open(log_file_path, mode="w", encoding="utf-8") as log_file:
         tee_out = _TeeStream(sys.stdout, log_file)
@@ -581,6 +581,7 @@ if __name__ == "__main__":
                 raise
             finally:
                 try:
+                    log_file.flush()
                     uploaded_uri = _upload_validation_log_to_s3(
                         log_file_path=log_file_path,
                         run_timestamp=run_timestamp,

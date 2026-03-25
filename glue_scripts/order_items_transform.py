@@ -95,6 +95,8 @@ def transform_order_items(
     products_ref_df = products_ref_dyf.toDF()
 
     input_count = order_items_df.count()
+    if input_count == 0:
+        return order_items_df, order_items_df, input_count
 
     # Trim string columns where present
     for col in ["item_id", "order_id", "product_id", "quantity", "unit_price", "discount"]:
@@ -424,18 +426,22 @@ def main() -> None:
         products_ref_dyf=products_ref_dyf,
     )
     logging.info("Read %d order_items records", input_count)
+    if input_count == 0:
+        logging.info("No new order_items records to process; skipping S3 writes.")
+        clean_count = 0
+        quarantine_count = 0
+    else:
+        clean_count = write_clean(
+            glue_context=glue_context,
+            clean_df=clean_df,
+            s3_output_path=args["S3_OUTPUT_PATH"],
+        )
 
-    clean_count = write_clean(
-        glue_context=glue_context,
-        clean_df=clean_df,
-        s3_output_path=args["S3_OUTPUT_PATH"],
-    )
-
-    quarantine_count = write_quarantine(
-        glue_context=glue_context,
-        quarantine_df=quarantine_df,
-        s3_quarantine_path=args["S3_QUARANTINE_PATH"],
-    )
+        quarantine_count = write_quarantine(
+            glue_context=glue_context,
+            quarantine_df=quarantine_df,
+            s3_quarantine_path=args["S3_QUARANTINE_PATH"],
+        )
 
     logging.info(
         "Order_items transform completed: clean=%d, quarantine=%d (rate=%.4f)",

@@ -95,6 +95,10 @@ def transform_orders(
 
     orders_df = orders_dyf.toDF()
     orders_df = drop_placeholder_columns(orders_df)
+    input_count = orders_df.count()
+    if input_count == 0:
+        return orders_df, orders_df, input_count
+
     customers_df = customers_dyf.toDF()
 
     # Some reference datasets might not have a customer_id column (or be empty).
@@ -110,8 +114,6 @@ def transform_orders(
         )
     else:
         orders_df = orders_df.withColumn("ref_customer_id", F.col("customer_id"))
-
-    input_count = orders_df.count()
 
     # Standardise date_ordered to timestamp using three formats
     parsed_date = F.coalesce(
@@ -370,18 +372,22 @@ def main() -> None:
         orders_dyf, customers_dyf
     )
     logging.info("Read %d order records", input_count)
+    if input_count == 0:
+        logging.info("No new order records to process; skipping S3 writes.")
+        clean_count = 0
+        quarantine_count = 0
+    else:
+        clean_count = write_clean(
+            glue_context=glue_context,
+            clean_df=clean_df,
+            s3_output_path=args["S3_OUTPUT_PATH"],
+        )
 
-    clean_count = write_clean(
-        glue_context=glue_context,
-        clean_df=clean_df,
-        s3_output_path=args["S3_OUTPUT_PATH"],
-    )
-
-    quarantine_count = write_quarantine(
-        glue_context=glue_context,
-        quarantine_df=quarantine_df,
-        s3_quarantine_path=args["S3_QUARANTINE_PATH"],
-    )
+        quarantine_count = write_quarantine(
+            glue_context=glue_context,
+            quarantine_df=quarantine_df,
+            s3_quarantine_path=args["S3_QUARANTINE_PATH"],
+        )
 
     logging.info(
         "Orders transform completed: clean=%d, quarantine=%d (rate=%.4f)",

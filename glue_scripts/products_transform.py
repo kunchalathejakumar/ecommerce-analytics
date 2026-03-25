@@ -62,6 +62,8 @@ def transform_products(products_dyf: DynamicFrame):
     products_df = products_dyf.toDF()
 
     input_count = products_df.count()
+    if input_count == 0:
+        return products_df, products_df, input_count
 
     # Trim basic string columns
     for col in ["product_id", "name", "category"]:
@@ -324,18 +326,22 @@ def main() -> None:
 
     clean_df, quarantine_df, input_count = transform_products(products_dyf)
     logging.info("Read %d product records", input_count)
+    if input_count == 0:
+        logging.info("No new product records to process; skipping S3 writes.")
+        clean_count = 0
+        quarantine_count = 0
+    else:
+        clean_count = write_clean(
+            glue_context=glue_context,
+            clean_df=clean_df,
+            s3_output_path=args["S3_OUTPUT_PATH"],
+        )
 
-    clean_count = write_clean(
-        glue_context=glue_context,
-        clean_df=clean_df,
-        s3_output_path=args["S3_OUTPUT_PATH"],
-    )
-
-    quarantine_count = write_quarantine(
-        glue_context=glue_context,
-        quarantine_df=quarantine_df,
-        s3_quarantine_path=args["S3_QUARANTINE_PATH"],
-    )
+        quarantine_count = write_quarantine(
+            glue_context=glue_context,
+            quarantine_df=quarantine_df,
+            s3_quarantine_path=args["S3_QUARANTINE_PATH"],
+        )
 
     logging.info(
         "Products transform completed: clean=%d, quarantine=%d (rate=%.4f)",
