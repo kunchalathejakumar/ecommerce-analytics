@@ -35,7 +35,7 @@ from sqlalchemy import create_engine, text
 # ---------------------------------------------------------------------------
 
 ATHENA_DATABASE = "ecommerce_catalog"
-STAGING_SCHEMA = "staging"
+STAGING_SCHEMA = os.getenv("PG_SCHEMA_STAGING", "staging")
 ALL_TABLES = ["orders", "customers", "products", "order_items"]
 
 POST_LOAD_INDEXES = [
