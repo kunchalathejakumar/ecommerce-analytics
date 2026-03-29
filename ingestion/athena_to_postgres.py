@@ -11,7 +11,7 @@ Usage:
 Required .env variables:
     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
     ATHENA_OUTPUT_S3  (e.g. s3://my-bucket/athena-results/)
-    PG_HOST, PG_PORT, PG_DATABASE, PG_USER, PG_PASSWORD
+    POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from sqlalchemy import create_engine, text
 # ---------------------------------------------------------------------------
 
 ATHENA_DATABASE = "ecommerce_catalog"
-STAGING_SCHEMA = os.getenv("PG_SCHEMA_STAGING", "staging")
+STAGING_SCHEMA = os.getenv("POSTGRES_SCHEMA_STAGING", "staging")
 ALL_TABLES = ["orders", "customers", "products", "order_items"]
 
 POST_LOAD_INDEXES = [
@@ -251,20 +251,20 @@ def query_athena_to_df(
 
 
 def _pg_connection_string() -> str:
-    host = os.getenv("PG_HOST", "localhost")
-    port = os.getenv("PG_PORT", "5433")
-    database = os.getenv("PG_DATABASE", "ecommerce")
-    user = os.getenv("PG_USER", "postgres")
-    password = os.getenv("PG_PASSWORD", "yourpassword")
+    host = os.getenv("POSTGRES_HOST", "localhost")
+    port = os.getenv("POSTGRES_PORT", "5433")
+    database = os.getenv("POSTGRES_DB", "ecommerce")
+    user = os.getenv("POSTGRES_USER", "postgres")
+    password = os.getenv("POSTGRES_PASSWORD", "yourpassword")
     return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}"
 
 
 def _raw_pg_dsn() -> str:
-    host = os.getenv("PG_HOST", "localhost")
-    port = os.getenv("PG_PORT", "5433")
-    database = os.getenv("PG_DATABASE", "ecommerce")
-    user = os.getenv("PG_USER", "postgres")
-    password = os.getenv("PG_PASSWORD", "yourpassword")
+    host = os.getenv("POSTGRES_HOST", "localhost")
+    port = os.getenv("POSTGRES_PORT", "5433")
+    database = os.getenv("POSTGRES_DB", "ecommerce")
+    user = os.getenv("POSTGRES_USER", "postgres")
+    password = os.getenv("POSTGRES_PASSWORD", "yourpassword")
     return f"host={host} port={port} dbname={database} user={user} password={password}"
 
 
@@ -441,8 +441,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     LOGGER.info("  athena db     : %s", ATHENA_DATABASE)
     LOGGER.info("  output s3     : %s", output_location)
     LOGGER.info("  workgroup     : %s", workgroup or "(default)")
-    LOGGER.info("  pg target     : %s:%s/%s", os.getenv("PG_HOST", "localhost"),
-                os.getenv("PG_PORT", "5433"), os.getenv("PG_DATABASE", "ecommerce"))
+    LOGGER.info("  pg target     : %s:%s/%s", os.getenv("POSTGRES_HOST", "localhost"),
+                os.getenv("POSTGRES_PORT", "5433"), os.getenv("POSTGRES_DB", "ecommerce"))
 
     # Build clients
     try:
@@ -454,8 +454,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         ) from exc
 
     LOGGER.info("Connecting to PostgreSQL — host=%s port=%s db=%s user=%s ...",
-                os.getenv("PG_HOST", "localhost"), os.getenv("PG_PORT", "5433"),
-                os.getenv("PG_DATABASE", "ecommerce"), os.getenv("PG_USER", "postgres"))
+                os.getenv("POSTGRES_HOST", "localhost"), os.getenv("POSTGRES_PORT", "5433"),
+                os.getenv("POSTGRES_DB", "ecommerce"), os.getenv("POSTGRES_USER", "postgres"))
     try:
         engine = create_engine(_pg_connection_string(), pool_pre_ping=True)
         with engine.connect() as conn:

@@ -1,0 +1,222 @@
+version: 2
+
+sources:
+  - name: staging
+    database: ecommerce
+    schema: staging
+    tables:
+      - name: orders
+        columns:
+          - name: order_id
+            tests:
+              - not_null
+              - unique
+          - name: customer_id
+            tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('staging', 'customers')
+                    field: customer_id
+          - name: order_date
+            tests:
+              - not_null
+          - name: status
+          - name: total_amount
+            tests:
+              - not_null
+
+      - name: customers
+        columns:
+          - name: customer_id
+            tests:
+              - not_null
+              - unique
+          - name: email
+            tests:
+              - not_null
+              - unique
+          - name: segment
+
+      - name: products
+        columns:
+          - name: product_id
+            tests:
+              - not_null
+              - unique
+          - name: cost_price
+            tests:
+              - not_null
+          - name: list_price
+            tests:
+              - not_null
+
+      - name: order_items
+        columns:
+          - name: order_id
+            tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('staging', 'orders')
+                    field: order_id
+          - name: product_id
+            tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('staging', 'products')
+                    field: product_id
+          - name: quantity
+            tests:
+              - not_null
+          - name: unit_price
+            tests:
+              - not_null
+
+models:
+  - name: stg_orders
+    description: Cleaned and standardised orders from the staging source.
+    columns:
+      - name: order_id
+        description: Surrogate-safe unique identifier for the order.
+        tests:
+          - not_null
+          - unique
+      - name: customer_id
+        description: Foreign key to stg_customers.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: order_date
+        description: Date the order was placed (coalesced from order_date and date_ordered).
+        tests:
+          - not_null
+      - name: status
+        description: Lowercase normalised order status.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['completed', 'shipped']
+      - name: total_amount
+        description: Total monetary value of the order.
+        tests:
+          - not_null
+      - name: shipping_region
+        description: Region the order was shipped to.
+      - name: loaded_at
+        description: Timestamp when the row was loaded into this model.
+        tests:
+          - not_null
+
+  - name: stg_customers
+    description: Cleaned and standardised customer records from the staging source.
+    columns:
+      - name: customer_id
+        description: Unique identifier for the customer.
+        tests:
+          - not_null
+          - unique
+      - name: name
+        description: Title-cased customer full name.
+        tests:
+          - not_null
+      - name: email
+        description: Lowercase email address.
+        tests:
+          - not_null
+          - unique
+      - name: segment
+        description: Lowercase customer segment.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['enterprise', 'online', 'retail', 'unknown', 'wholesale']
+              config:
+                severity: warn
+      - name: country
+        description: Uppercase country name.
+      - name: loaded_at
+        description: Timestamp when the row was loaded into this model.
+        tests:
+          - not_null
+
+  - name: stg_products
+    description: Cleaned and enriched product records with pricing metrics.
+    columns:
+      - name: product_id
+        description: Unique identifier for the product.
+        tests:
+          - not_null
+          - unique
+      - name: product_name
+        description: Title-cased product name.
+        tests:
+          - not_null
+      - name: category
+        description: Lowercase product category.
+      - name: price
+        description: List (selling) price of the product.
+        tests:
+          - not_null
+      - name: cost_price
+        description: Cost price of the product.
+        tests:
+          - not_null
+      - name: margin
+        description: Absolute margin (list_price - cost_price).
+        tests:
+          - not_null
+      - name: margin_pct
+        description: Margin as a percentage of cost price, rounded to 2 decimal places.
+      - name: loaded_at
+        description: Timestamp when the row was loaded into this model.
+        tests:
+          - not_null
+
+  - name: stg_order_items
+    description: Cleaned order line items with derived revenue metric.
+    columns:
+      - name: order_id
+        description: Foreign key to stg_orders.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: item_id
+        description: Identifier for the line item within an order.
+        tests:
+          - not_null
+      - name: product_id
+        description: Foreign key to stg_products.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_products')
+                field: product_id
+      - name: quantity
+        description: Number of units ordered.
+        tests:
+          - not_null
+      - name: unit_price
+        description: Price per unit at time of purchase.
+        tests:
+          - not_null
+      - name: discount
+        description: Fractional discount applied to the line item (0–1).
+      - name: line_revenue
+        description: Revenue for this line after discount (quantity * unit_price * (1 - discount)).
+        tests:
+          - not_null
+      - name: loaded_at
+        description: Timestamp when the row was loaded into this model.
+        tests:
+          - not_null
