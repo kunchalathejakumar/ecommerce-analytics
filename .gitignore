@@ -13,5 +13,6 @@ dbt_project/.user.yml
 commands.sh
 commands_usage.sh
 logs/athena/
+logs/dbt.log
 
 
