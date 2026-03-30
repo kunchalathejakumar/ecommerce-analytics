@@ -16,9 +16,9 @@ products as (
 
 ),
 
-orders_enriched as (
+orders as (
 
-    select * from {{ ref('int_orders_enriched') }}
+    select * from {{ ref('int_orders') }}
 
 ),
 
@@ -42,17 +42,17 @@ joined as (
         p.margin_pct    as product_margin_pct,
 
         -- order & customer context
-        oe.order_date,
-        oe.status       as order_status,
-        oe.customer_id,
-        oe.customer_name,
-        oe.customer_segment,
-        oe.customer_country,
-        oe.shipping_region,
-        oe.order_year,
-        oe.order_month,
-        oe.order_quarter,
-        oe.is_failed_order,
+        o.order_date,
+        o.status       as order_status,
+        o.customer_id,
+        o.customer_name,
+        o.customer_segment,
+        o.customer_country,
+        o.shipping_region,
+        o.order_year,
+        o.order_month,
+        o.order_quarter,
+        o.is_failed_order,
 
         -- derived cost & profit metrics
         CAST(oi.quantity * p.cost_price AS NUMERIC(12, 2))          as line_cost,
@@ -70,14 +70,12 @@ joined as (
                 AS NUMERIC(8, 4)
             )
         END                                                         as line_margin_pct,
-
         oi.loaded_at
-
     from order_items oi
     left join products p
         on oi.product_id = p.product_id
-    left join orders_enriched oe
-        on oi.order_id = oe.order_id
+    left join orders o
+        on oi.order_id = o.order_id
 
 )
 
