@@ -1,0 +1,44 @@
+version: 2
+
+models:
+  - name: mart_sales_daily
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "total_revenue >= 0"
+    columns:
+      - name: order_date
+        tests:
+          - not_null
+      - name: order_count
+        tests:
+          - not_null
+      - name: total_revenue
+        tests:
+          - not_null
+
+  - name: mart_customer_summary
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+          - unique
+      - name: lifetime_value
+        tests:
+          - not_null
+      - name: total_orders
+        tests:
+          - not_null
+
+  - name: mart_product_performance
+    columns:
+      - name: product_id
+        tests:
+          - not_null
+          - unique
+      - name: total_revenue
+        tests:
+          - not_null
+      - name: total_profit
+        tests:
+          - not_null
