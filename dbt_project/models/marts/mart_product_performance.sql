@@ -13,14 +13,9 @@ with order_items as (
     where not is_failed_order
 ),
 
-product_aggregates as (
+product_sales as (
     select
         product_id,
-        max(product_name) as product_name,
-        max(product_category) as product_category,
-        max(product_cost) as product_cost,
-        max(product_price) as product_price,
-        max(product_margin_pct) as product_margin_pct,
         count(distinct order_id) as orders_with_product,
         sum(quantity) as total_quantity_sold,
         sum(line_revenue) as total_revenue,
@@ -36,31 +31,44 @@ product_aggregates as (
         sum(case when customer_segment = 'basic' then quantity else 0 end) as qty_sold_basic
     from order_items
     group by product_id
+),
+
+products as (
+    select
+        product_id,
+        product_name,
+        category as product_category,
+        cost_price as product_cost,
+        price as product_price,
+        margin_pct as product_margin_pct
+    from {{ ref('stg_products') }}
 )
 
 select
-    product_id,
-    product_name,
-    product_category,
-    product_cost,
-    product_price,
-    product_margin_pct,
-    orders_with_product,
-    total_quantity_sold,
-    total_revenue,
-    avg_selling_price,
-    total_cost,
-    total_profit,
-    avg_margin_pct,
-    avg_discount_rate,
-    discounted_sales_count,
-    total_sales_count,
-    round((discounted_sales_count::numeric / nullif(total_sales_count, 0)) * 100, 2) as discount_rate_pct,
-    qty_sold_premium,
-    qty_sold_standard,
-    qty_sold_basic,
-    rank() over (order by total_revenue desc) as revenue_rank,
-    rank() over (order by total_profit desc) as profit_rank,
+    s.product_id,
+    p.product_name,
+    coalesce(p.product_category, 'unknown') as product_category,
+    p.product_cost,
+    p.product_price,
+    p.product_margin_pct,
+    s.orders_with_product,
+    s.total_quantity_sold,
+    s.total_revenue,
+    s.avg_selling_price,
+    s.total_cost,
+    s.total_profit,
+    s.avg_margin_pct,
+    s.avg_discount_rate,
+    s.discounted_sales_count,
+    s.total_sales_count,
+    round((s.discounted_sales_count::numeric / nullif(s.total_sales_count, 0)) * 100, 2) as discount_rate_pct,
+    s.qty_sold_premium,
+    s.qty_sold_standard,
+    s.qty_sold_basic,
+    rank() over (order by s.total_revenue desc) as revenue_rank,
+    rank() over (order by s.total_profit desc) as profit_rank,
     current_timestamp as dbt_updated_at
-from product_aggregates
-order by total_revenue desc
+from product_sales s
+left join products p
+    on s.product_id = p.product_id
+order by s.total_revenue desc

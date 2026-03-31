@@ -33,7 +33,7 @@ select
     sum(case when order_value_tier = 'high' then 1 else 0 end) as high_value_orders,
     sum(case when order_value_tier = 'medium' then 1 else 0 end) as medium_value_orders,
     sum(case when order_value_tier = 'low' then 1 else 0 end) as low_value_orders,
-    current_timestamp as dbt_updated_at
+    current_timestamp as updated_at
 from orders
 group by
     order_date,
