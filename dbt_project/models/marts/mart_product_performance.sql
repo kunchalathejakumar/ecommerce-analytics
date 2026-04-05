@@ -26,9 +26,11 @@ product_sales as (
         avg(discount) as avg_discount_rate,
         sum(case when discount > 0 then 1 else 0 end) as discounted_sales_count,
         count(*) as total_sales_count,
-        sum(case when customer_segment = 'premium' then quantity else 0 end) as qty_sold_premium,
-        sum(case when customer_segment = 'standard' then quantity else 0 end) as qty_sold_standard,
-        sum(case when customer_segment = 'basic' then quantity else 0 end) as qty_sold_basic
+        sum(case when lower(customer_segment) = 'enterprise' then quantity else 0 end) as qty_sold_enterprise,
+        sum(case when lower(customer_segment) = 'online' then quantity else 0 end) as qty_sold_online,
+        sum(case when lower(customer_segment) = 'retail' then quantity else 0 end) as qty_sold_retail,
+        sum(case when lower(customer_segment) = 'unknown' then quantity else 0 end) as qty_sold_unknown,
+        sum(case when lower(customer_segment) = 'wholesale' then quantity else 0 end) as qty_sold_wholesale
     from order_items
     group by product_id
 ),
@@ -62,9 +64,11 @@ select
     s.discounted_sales_count,
     s.total_sales_count,
     round((s.discounted_sales_count::numeric / nullif(s.total_sales_count, 0)) * 100, 2) as discount_rate_pct,
-    s.qty_sold_premium,
-    s.qty_sold_standard,
-    s.qty_sold_basic,
+    s.qty_sold_enterprise,
+    s.qty_sold_online,
+    s.qty_sold_retail,
+    s.qty_sold_unknown,
+    s.qty_sold_wholesale,
     rank() over (order by s.total_revenue desc) as revenue_rank,
     rank() over (order by s.total_profit desc) as profit_rank,
     current_timestamp as dbt_updated_at
