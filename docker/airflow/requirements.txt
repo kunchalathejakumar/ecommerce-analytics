@@ -1,0 +1,17 @@
+# Installed into the Airflow 2.8 image (see Dockerfile). Used by DAGs and /opt/airflow/project/ingestion.
+#
+# Do NOT point pip at the repository root requirements.txt from this image: that file pins
+# apache-airflow 3.x, dbt, and other stacks that conflict with apache/airflow:2.8.0. When you
+# add a third-party import under ingestion/ or dbt_project/, add the package here (and rebuild).
+#
+dbt-postgres==1.7.0
+psycopg2-binary==2.9.9
+boto3>=1.28.0,<2
+python-dotenv>=1.0.0
+tabulate>=0.9.0
+pandas>=2.0.0
+pyarrow>=14.0.0
+numpy>=1.24.0
+sqlalchemy>=1.4.28,<2.0
+tqdm>=4.65.0
+Faker>=24.0.0

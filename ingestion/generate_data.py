@@ -4,12 +4,16 @@ import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
 
 import numpy as np
 from dotenv import load_dotenv
 from faker import Faker
 from tqdm import tqdm
+
+# When using --run-id N, surrogate keys start at N * ID_RUN_STRIDE + 1 per table.
+# Must exceed the largest single-table row count in full mode (15M order_items).
+ID_RUN_STRIDE = 25_000_000
 
 
 @dataclass
@@ -44,6 +48,25 @@ def ensure_output_dir(base_dir: Path) -> None:
     base_dir.mkdir(parents=True, exist_ok=True)
 
 
+def resolve_id_base(args: argparse.Namespace) -> int:
+    """
+    Choose the integer offset for all surrogate keys.
+
+    Priority: --id-base > --run-id > GENERATE_DATA_ID_BASE env > 0.
+
+    With --run-id K, keys start at K * ID_RUN_STRIDE + 1 (per entity range),
+    so successive runs do not reuse the same order_id / item_id / etc.
+    """
+    if args.id_base is not None:
+        return int(args.id_base)
+    if args.run_id is not None:
+        return int(args.run_id) * ID_RUN_STRIDE
+    env_val = os.environ.get("GENERATE_DATA_ID_BASE")
+    if env_val is not None and str(env_val).strip() != "":
+        return int(str(env_val).strip())
+    return 0
+
+
 def sample_indices(n_rows: int, fraction: float) -> np.ndarray:
     n = int(n_rows * fraction)
     if n <= 0:
@@ -52,7 +75,11 @@ def sample_indices(n_rows: int, fraction: float) -> np.ndarray:
 
 
 def generate_customers_csv(
-    path: Path, n_rows: int, faker: Faker, issue_rate: float
+    path: Path,
+    n_rows: int,
+    faker: Faker,
+    issue_rate: float,
+    id_base: int = 0,
 ) -> None:
     """
     Generate customers.csv.
@@ -62,7 +89,7 @@ def generate_customers_csv(
     """
     rng = np.random.default_rng()
 
-    customer_ids = np.arange(1, n_rows + 1)
+    customer_ids = np.arange(id_base + 1, id_base + n_rows + 1)
 
     first_names = np.array([faker.first_name() for _ in range(n_rows)])
     last_names = np.array([faker.last_name() for _ in range(n_rows)])
@@ -95,7 +122,11 @@ def generate_customers_csv(
 
 
 def generate_products_csv(
-    path: Path, n_rows: int, faker: Faker, issue_rate: float
+    path: Path,
+    n_rows: int,
+    faker: Faker,
+    issue_rate: float,
+    id_base: int = 0,
 ) -> None:
     """
     Generate products.csv.
@@ -105,7 +136,7 @@ def generate_products_csv(
     """
     rng = np.random.default_rng()
 
-    product_ids = np.arange(1, n_rows + 1)
+    product_ids = np.arange(id_base + 1, id_base + n_rows + 1)
     names = np.array([faker.word().title() for _ in range(n_rows)], dtype=object)
 
     base_categories = np.array(
@@ -157,6 +188,7 @@ def generate_orders_and_items_csv(
     products_n: int,
     faker: Faker,
     issue_rate: float,
+    id_base: int = 0,
 ) -> None:
     """
     Generate orders.csv and order_items.csv.
@@ -168,7 +200,7 @@ def generate_orders_and_items_csv(
     """
     rng = np.random.default_rng()
 
-    order_ids = np.arange(1, orders_n + 1)
+    order_ids = np.arange(id_base + 1, id_base + orders_n + 1)
     base_date = datetime.now() - timedelta(days=365)
     days_offsets = rng.integers(0, 365, size=orders_n)
     dates = np.array([base_date + timedelta(days=int(d)) for d in days_offsets])
@@ -196,18 +228,20 @@ def generate_orders_and_items_csv(
         dtype=object,
     )
 
-    valid_customer_ids = np.arange(1, customers_n + 1)
+    valid_customer_ids = np.arange(id_base + 1, id_base + customers_n + 1)
     customer_ids = rng.choice(valid_customer_ids, size=orders_n, replace=True)
 
     bad_orders_idx = sample_indices(orders_n, issue_rate)
     for idx in bad_orders_idx:
-        customer_ids[idx] = customers_n + 1 + int(rng.integers(1, max(2, customers_n)))
+        customer_ids[idx] = id_base + customers_n + 1 + int(
+            rng.integers(1, max(2, customers_n))
+        )
 
     # Keep total_amount parse-safe: no thousand separators => no CSV column-shifting surprises.
     total_amounts = rng.uniform(20.0, 500.0, size=orders_n)
     total_amount_strings = [f"${amt:.2f}" for amt in total_amounts]
 
-    item_ids = np.arange(1, order_items_n + 1)
+    item_ids = np.arange(id_base + 1, id_base + order_items_n + 1)
     # Keep a stable 1-to-N mapping between orders and items (e.g., 3 items/order in this project).
     items_per_order = order_items_n // orders_n if orders_n else 0
     if orders_n > 0 and items_per_order * orders_n == order_items_n:
@@ -215,7 +249,9 @@ def generate_orders_and_items_csv(
     else:
         order_ids_for_items = rng.choice(order_ids, size=order_items_n, replace=True)
 
-    product_ids_for_items = rng.integers(1, products_n + 1, size=order_items_n)
+    product_ids_for_items = rng.integers(
+        id_base + 1, id_base + products_n + 1, size=order_items_n
+    )
     unit_prices = rng.uniform(1.0, 500.0, size=order_items_n)
 
     discounts = rng.uniform(0.0, 0.5, size=order_items_n)
@@ -278,6 +314,23 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         help="Fraction of rows to inject quarantine-triggering issues (0..1). "
         "If omitted, a random rate between 0%% and 5%% is chosen for this run.",
     )
+    parser.add_argument(
+        "--id-base",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Add N to every generated surrogate key (customer_id, product_id, "
+        "order_id, item_id). Use this or --run-id so each load run gets non-overlapping "
+        "IDs when appending to a warehouse. Overrides --run-id.",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=int,
+        default=None,
+        metavar="K",
+        help=f"Shorthand for --id-base K*{ID_RUN_STRIDE:,} (non-overlapping blocks per run). "
+        "Ignored if --id-base is set.",
+    )
     return parser.parse_args(argv)
 
 
@@ -286,6 +339,7 @@ def main(argv: List[str] | None = None) -> None:
 
     args = parse_args(argv)
     volumes = get_volumes(full=args.full)
+    id_base = resolve_id_base(args)
 
     if args.issue_records_rate is None:
         issue_rate = random.uniform(0.0, 0.05)
@@ -297,6 +351,7 @@ def main(argv: List[str] | None = None) -> None:
     print("Starting synthetic data generation...")
     print(f"  Mode        : {'FULL' if args.full else 'TEST'}")
     print(f"  Output dir  : {Path(args.output_dir).resolve()}")
+    print(f"  ID base     : {id_base:,} (surrogate keys start at {id_base + 1:,} per table)")
     print(f"  Issue rate  : {issue_rate:.2%} ({issue_rate_note})")
     print(
         "  Volumes     : "
@@ -318,13 +373,21 @@ def main(argv: List[str] | None = None) -> None:
 
     print("\n[1/3] Generating customers.csv...")
     generate_customers_csv(
-        customers_path, volumes.customers, faker, issue_rate=issue_rate
+        customers_path,
+        volumes.customers,
+        faker,
+        issue_rate=issue_rate,
+        id_base=id_base,
     )
     print("Completed customers.csv")
 
     print("\n[2/3] Generating products.csv...")
     generate_products_csv(
-        products_path, volumes.products, faker, issue_rate=issue_rate
+        products_path,
+        volumes.products,
+        faker,
+        issue_rate=issue_rate,
+        id_base=id_base,
     )
     print("Completed products.csv")
 
@@ -338,6 +401,7 @@ def main(argv: List[str] | None = None) -> None:
         products_n=volumes.products,
         faker=faker,
         issue_rate=issue_rate,
+        id_base=id_base,
     )
     print("Completed orders.csv and order_items.csv")
     print("\nData generation finished.")

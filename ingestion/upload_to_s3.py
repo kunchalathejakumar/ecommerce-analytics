@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -234,6 +235,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[List[str]] = None) -> None:
     load_environment()
+    if argv is None:
+        # When imported by Airflow, sys.argv is the airflow CLI — not our flags.
+        argv = sys.argv[1:] if __name__ == "__main__" else []
     args = parse_args(argv)
     configure_logging(args.verbose)
 
@@ -256,7 +260,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         csv_files = iter_csv_files(raw_dir)
     except FileNotFoundError as exc:
         logging.error("%s", exc)
-        return
+        raise RuntimeError(
+            "Raw data directory is missing. Run generate_data first, or set "
+            "ecommerce_pipeline_generate_data_output_dir and ensure docker-compose "
+            "mounts ../data:/opt/airflow/data so both tasks share the same folder."
+        ) from exc
 
     if not csv_files:
         logging.info("No CSV files found in %s, nothing to upload.", raw_dir)

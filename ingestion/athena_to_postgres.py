@@ -28,7 +28,7 @@ import pandas as pd
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -276,7 +276,11 @@ def ensure_staging_schema(engine: Any) -> None:
 
 
 def load_df_to_postgres(engine: Any, df: pd.DataFrame, table_name: str) -> int:
-    """Write DataFrame to staging.<table_name>, replacing any existing data."""
+    """Write DataFrame to staging.<table_name>, replacing rows without DROP.
+
+    ``to_sql(..., if_exists="replace")`` issues DROP TABLE, which fails when dbt
+    views depend on staging.*. We TRUNCATE existing tables, then append.
+    """
     target = f"{STAGING_SCHEMA}.{table_name}"
     if df.empty:
         LOGGER.warning("[%s] DataFrame is empty — skipping write.", table_name)
@@ -285,15 +289,44 @@ def load_df_to_postgres(engine: Any, df: pd.DataFrame, table_name: str) -> int:
     row_count = len(df)
     chunksize = 500
     estimated_chunks = max(1, -(-row_count // chunksize))  # ceiling division
-    LOGGER.info("[%s] Writing %d rows to %s (chunksize=%d, ~%d chunks, if_exists=replace) ...",
-                table_name, row_count, target, chunksize, estimated_chunks)
+
+    insp = inspect(engine)
+    table_exists = insp.has_table(table_name, schema=STAGING_SCHEMA)
+    if table_exists:
+        LOGGER.info(
+            "[%s] Truncating %s (keeps table for dependent views) ...",
+            table_name,
+            target,
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f'TRUNCATE TABLE "{STAGING_SCHEMA}"."{table_name}" '
+                    "RESTART IDENTITY CASCADE"
+                )
+            )
+        write_mode = "append"
+        mode_label = "truncate+append"
+    else:
+        write_mode = "replace"
+        mode_label = "create(replace)"
+
+    LOGGER.info(
+        "[%s] Writing %d rows to %s (chunksize=%d, ~%d chunks, %s) ...",
+        table_name,
+        row_count,
+        target,
+        chunksize,
+        estimated_chunks,
+        mode_label,
+    )
 
     pg_start = time.monotonic()
     df.to_sql(
         name=table_name,
         schema=STAGING_SCHEMA,
         con=engine,
-        if_exists="replace",
+        if_exists=write_mode,
         index=False,
         method="multi",
         chunksize=chunksize,
@@ -412,6 +445,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[List[str]] = None) -> None:
     load_dotenv()
+
+    if argv is None:
+        argv = sys.argv[1:] if __name__ == "__main__" else []
 
     args = parse_args(argv)
 

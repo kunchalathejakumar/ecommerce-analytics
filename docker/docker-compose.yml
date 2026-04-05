@@ -19,7 +19,11 @@ services:
       retries: 5
 
   airflow-init:
-    image: apache/airflow:2.8.0
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    image: ecommerce-analytics-airflow:2.8.0
+    pull_policy: never
     container_name: airflow-init
     depends_on:
       postgres:
@@ -29,8 +33,30 @@ services:
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      ATHENA_OUTPUT_S3: ${ATHENA_OUTPUT_S3}
+      GLUE_JOB_NAME_CUSTOMERS: ${GLUE_JOB_NAME_CUSTOMERS}
+      GLUE_JOB_NAME_PRODUCTS: ${GLUE_JOB_NAME_PRODUCTS}
+      GLUE_JOB_NAME_ORDERS: ${GLUE_JOB_NAME_ORDERS}
+      GLUE_JOB_NAME_ORDER_ITEMS: ${GLUE_JOB_NAME_ORDER_ITEMS}
+      GLUE_CRAWLER_NAME_RAW: ${GLUE_CRAWLER_NAME_RAW}
+      GLUE_CRAWLER_NAME_PROCESSED: ${GLUE_CRAWLER_NAME_PROCESSED}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ../dbt_project:/opt/airflow/project/dbt_project
+      - ../ingestion:/opt/airflow/project/ingestion
+      - ../glue_scripts:/opt/airflow/project/glue_scripts
+      - ../.env:/opt/airflow/project/.env
+      # generate_data / ingest_to_s3 use paths under /opt/airflow/data (see Airflow Variables); persist across container recreates.
+      - ../data:/opt/airflow/data
       - airflow-logs:/opt/airflow/logs
     command:
       - bash
@@ -39,7 +65,11 @@ services:
     restart: on-failure
 
   airflow-webserver:
-    image: apache/airflow:2.8.0
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    image: ecommerce-analytics-airflow:2.8.0
+    pull_policy: never
     container_name: airflow-webserver
     restart: unless-stopped
     depends_on:
@@ -53,17 +83,41 @@ services:
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY}
       AIRFLOW__WEBSERVER__BASE_URL: http://localhost:8080
-      _PIP_ADDITIONAL_REQUIREMENTS: ""
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      ATHENA_OUTPUT_S3: ${ATHENA_OUTPUT_S3}
+      GLUE_JOB_NAME_CUSTOMERS: ${GLUE_JOB_NAME_CUSTOMERS}
+      GLUE_JOB_NAME_PRODUCTS: ${GLUE_JOB_NAME_PRODUCTS}
+      GLUE_JOB_NAME_ORDERS: ${GLUE_JOB_NAME_ORDERS}
+      GLUE_JOB_NAME_ORDER_ITEMS: ${GLUE_JOB_NAME_ORDER_ITEMS}
+      GLUE_CRAWLER_NAME_RAW: ${GLUE_CRAWLER_NAME_RAW}
+      GLUE_CRAWLER_NAME_PROCESSED: ${GLUE_CRAWLER_NAME_PROCESSED}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "8080:8080"
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ../dbt_project:/opt/airflow/project/dbt_project
+      - ../ingestion:/opt/airflow/project/ingestion
+      - ../glue_scripts:/opt/airflow/project/glue_scripts
+      - ../.env:/opt/airflow/project/.env
+      - ../data:/opt/airflow/data
       - airflow-logs:/opt/airflow/logs
       - airflow-config:/opt/airflow/config
     command: webserver
 
   airflow-scheduler:
-    image: apache/airflow:2.8.0
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    image: ecommerce-analytics-airflow:2.8.0
+    pull_policy: never
     container_name: airflow-scheduler
     restart: unless-stopped
     depends_on:
@@ -76,9 +130,29 @@ services:
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY}
-      _PIP_ADDITIONAL_REQUIREMENTS: ""
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      ATHENA_OUTPUT_S3: ${ATHENA_OUTPUT_S3}
+      GLUE_JOB_NAME_CUSTOMERS: ${GLUE_JOB_NAME_CUSTOMERS}
+      GLUE_JOB_NAME_PRODUCTS: ${GLUE_JOB_NAME_PRODUCTS}
+      GLUE_JOB_NAME_ORDERS: ${GLUE_JOB_NAME_ORDERS}
+      GLUE_JOB_NAME_ORDER_ITEMS: ${GLUE_JOB_NAME_ORDER_ITEMS}
+      GLUE_CRAWLER_NAME_RAW: ${GLUE_CRAWLER_NAME_RAW}
+      GLUE_CRAWLER_NAME_PROCESSED: ${GLUE_CRAWLER_NAME_PROCESSED}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ../dbt_project:/opt/airflow/project/dbt_project
+      - ../ingestion:/opt/airflow/project/ingestion
+      - ../glue_scripts:/opt/airflow/project/glue_scripts
+      - ../.env:/opt/airflow/project/.env
+      - ../data:/opt/airflow/data
       - airflow-logs:/opt/airflow/logs
       - airflow-config:/opt/airflow/config
     command: scheduler
