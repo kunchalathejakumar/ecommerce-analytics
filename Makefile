@@ -12,4 +12,5 @@ ps:
 
 clean:
 	docker-compose -f docker/docker-compose.yml --env-file .env down -v
+	docker-compose -f docker/docker-compose.yml --env-file .env build
 	docker-compose -f docker/docker-compose.yml --env-file .env up -d

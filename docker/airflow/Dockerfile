@@ -5,7 +5,7 @@ FROM apache/airflow:2.8.0-python3.11
 # official v2 bundle over `pip install awscli` to avoid boto3/botocore clashes with Airflow.
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl unzip ca-certificates \
+    && apt-get install -y --no-install-recommends curl unzip ca-certificates graphviz \
     && ARCH="$(uname -m)" \
     && case "$ARCH" in \
          x86_64) AWSCLI_ARCH=x86_64 ;; \

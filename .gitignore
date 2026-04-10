@@ -13,5 +13,5 @@ commands.sh
 commands_usage.sh
 logs/athena/
 logs/dbt.log
-
-
+*.png
+*.svg
