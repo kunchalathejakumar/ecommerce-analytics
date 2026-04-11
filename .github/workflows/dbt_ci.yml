@@ -85,10 +85,48 @@ jobs:
         run: dbt deps --profiles-dir .
 
       # -----------------------------------------------------------------------
-      # 6. Create the staging, intermediate, and marts schemas plus all four
-      #    source tables that the staging models read from.
-      #    psql uses the PGHOST / PGPORT / PGUSER / PGPASSWORD / PGDATABASE
-      #    standard environment variables set at the job level.
+      # 6. Create schemas and source tables.
+      #
+      #    Schemas created:
+      #      staging          — raw source tables read by stg_* models
+      #      intermediate     — int_* models
+      #      marts            — mart_* models
+      #      dbt_test__audit  — failure rows written by dbt test --store-failures
+      #
+      #    Source table columns are derived from staging/schema.yml sources block:
+      #
+      #    staging.customers
+      #      customer_id  → source: not_null, unique
+      #      email        → source: not_null, unique
+      #      segment      → stg_customers model: accepted_values (warn)
+      #      name         → stg_customers model: not_null (initcap'd)
+      #      country      → stg_customers model: upper(country)
+      #
+      #    staging.orders
+      #      order_id        → source: not_null, unique
+      #      customer_id     → source: not_null, relationships(→customers.customer_id)
+      #      order_date      → source: not_null  |  stg_orders: coalesce(order_date, date_ordered)
+      #      date_ordered    → fallback for coalesce; NULL in CI (order_date is populated)
+      #      status          → stg_orders model: accepted_values ['completed','shipped']
+      #      total_amount    → source: not_null
+      #      shipping_region → stg_orders model: exposed as-is
+      #
+      #    staging.products
+      #      product_id  → source: not_null, unique
+      #      list_price  → source: not_null  |  stg_products maps to 'price'
+      #      cost_price  → source: not_null  |  stg_products: margin = list_price - cost_price
+      #      name        → stg_products model: maps to 'product_name' (not_null)
+      #      category    → stg_products model: lower(category)
+      #
+      #    staging.order_items
+      #      item_id     → stg_order_items model: not_null
+      #      order_id    → source: relationships(→orders.order_id)
+      #                     stg_order_items model: not_null, relationships(→stg_orders)
+      #      product_id  → source: not_null, relationships(→products.product_id)
+      #                     stg_order_items model: not_null, relationships(→stg_products)
+      #      quantity    → source + model: not_null
+      #      unit_price  → source + model: not_null
+      #      discount    → stg_order_items: line_revenue = qty * unit_price * (1 - discount)
       # -----------------------------------------------------------------------
       - name: Create schemas and source tables
         env:
@@ -102,52 +140,147 @@ jobs:
           CREATE SCHEMA IF NOT EXISTS staging;
           CREATE SCHEMA IF NOT EXISTS intermediate;
           CREATE SCHEMA IF NOT EXISTS marts;
+          CREATE SCHEMA IF NOT EXISTS dbt_test__audit;
 
+          -- source: customer_id(not_null,unique) | email(not_null,unique)
           CREATE TABLE IF NOT EXISTS staging.customers (
-            customer_id  INTEGER,
-            name         TEXT,
-            email        TEXT,
-            segment      TEXT,
+            customer_id  INTEGER  NOT NULL,
+            name         TEXT     NOT NULL,
+            email        TEXT     NOT NULL,
+            segment      TEXT     NOT NULL,
             country      TEXT
           );
 
+          -- source: order_id(not_null,unique) | customer_id(not_null,FK→customers)
+          --         order_date(not_null) | total_amount(not_null)
+          -- date_ordered kept for stg_orders coalesce(order_date, date_ordered)
           CREATE TABLE IF NOT EXISTS staging.orders (
-            order_id        INTEGER,
-            customer_id     INTEGER,
+            order_id        INTEGER       NOT NULL,
+            customer_id     INTEGER       NOT NULL,
             order_date      DATE,
             date_ordered    DATE,
             status          TEXT,
-            total_amount    NUMERIC(12, 2),
+            total_amount    NUMERIC(12,2) NOT NULL,
             shipping_region TEXT
           );
 
+          -- source: product_id(not_null,unique) | list_price(not_null) | cost_price(not_null)
           CREATE TABLE IF NOT EXISTS staging.products (
-            product_id  INTEGER,
-            name        TEXT,
+            product_id  INTEGER       NOT NULL,
+            name        TEXT          NOT NULL,
             category    TEXT,
-            list_price  NUMERIC(12, 2),
-            cost_price  NUMERIC(12, 2)
+            list_price  NUMERIC(12,2) NOT NULL,
+            cost_price  NUMERIC(12,2) NOT NULL
           );
 
+          -- source: product_id(not_null,FK→products) | quantity(not_null) | unit_price(not_null)
+          --         order_id(FK→orders)
+          -- item_id needed for stg_order_items.item_id not_null model test
           CREATE TABLE IF NOT EXISTS staging.order_items (
-            item_id     INTEGER,
-            order_id    INTEGER,
-            product_id  INTEGER,
-            quantity    INTEGER,
-            unit_price  NUMERIC(12, 2),
-            discount    NUMERIC(8, 4)
+            item_id     INTEGER       NOT NULL,
+            order_id    INTEGER       NOT NULL,
+            product_id  INTEGER       NOT NULL,
+            quantity    INTEGER       NOT NULL,
+            unit_price  NUMERIC(12,2) NOT NULL,
+            discount    NUMERIC(8,4)  NOT NULL DEFAULT 0
           );
           EOSQL
 
       # -----------------------------------------------------------------------
-      # 7. Generate small, self-contained CI fixture data and load it directly
-      #    into the staging schema. No local CSV files required — the data/
-      #    folder is gitignored and never pushed to GitHub.
+      # 7. Generate CI fixture data inline and load directly into staging.
+      #    The data/ folder is gitignored so no CSV files are available on the
+      #    runner. All values are chosen to satisfy every test across:
+      #      staging/schema.yml  (source + stg_* model tests)
+      #      marts/schema.yml    (mart_* model tests)
       #
-      #    Volumes are intentionally tiny (CI speed):
-      #      50 customers · 30 products · 60 orders · 120 order_items
+      #    Volumes (CI speed):
+      #      50 customers · 30 products · 60 orders · 120 order_items (2/order)
       #
-      #    All foreign keys are kept consistent so dbt relationship tests pass.
+      #    ── STAGING SOURCE TESTS (staging/schema.yml: sources block) ──────────
+      #    staging.customers
+      #      customer_id : 1–50, no gaps    → not_null ✓  unique ✓
+      #      email       : user{i}@…        → not_null ✓  unique ✓
+      #
+      #    staging.orders
+      #      order_id    : 1–60             → not_null ✓  unique ✓
+      #      customer_id : (i%50)+1 → 1–50  → not_null ✓  FK→customers ✓
+      #      order_date  : populated        → not_null ✓
+      #      total_amount: > 0              → not_null ✓
+      #      order_items.order_id → orders.order_id  → relationships ✓
+      #
+      #    staging.products
+      #      product_id  : 1–30             → not_null ✓  unique ✓
+      #      list_price  : 10+i*6.5         → not_null ✓
+      #      cost_price  : 60% list_price   → not_null ✓
+      #      order_items.product_id → products.product_id → relationships ✓
+      #
+      #    staging.order_items
+      #      product_id  : (i%30)+1 → 1–30  → not_null ✓  FK→products ✓
+      #      quantity    : 1–5              → not_null ✓
+      #      unit_price  : > 0             → not_null ✓
+      #
+      #    ── STAGING MODEL TESTS (staging/schema.yml: models block) ───────────
+      #    stg_customers
+      #      customer_id : unique ✓  not_null ✓
+      #      name        : "Test User i" → initcap → not_null ✓
+      #      email       : lowercase, unique → not_null ✓  unique ✓
+      #      segment     : retail/wholesale/online/enterprise
+      #                    → lower() → accepted_values (severity:warn) ✓
+      #      loaded_at   : current_timestamp → not_null ✓
+      #
+      #    stg_orders
+      #      order_id    : unique ✓  not_null ✓
+      #      customer_id : FK→stg_customers 1–50 ✓  not_null ✓
+      #      order_date  : coalesce(order_date, date_ordered)=order_date → not_null ✓
+      #      status      : 'completed'/'shipped' → accepted_values ✓  not_null ✓
+      #      total_amount: > 0 → not_null ✓
+      #      loaded_at   : current_timestamp → not_null ✓
+      #
+      #    stg_products
+      #      product_id  : unique ✓  not_null ✓
+      #      product_name: initcap("Product i") → not_null ✓
+      #      price       : list_price > 0 → not_null ✓
+      #      cost_price  : 0.6*list → not_null ✓
+      #      margin      : list_price - cost_price = 0.4*list > 0 → not_null ✓
+      #      loaded_at   : current_timestamp → not_null ✓
+      #
+      #    stg_order_items
+      #      item_id     : 1–120 → not_null ✓
+      #      order_id    : 1–60 → not_null ✓  FK→stg_orders ✓
+      #      product_id  : 1–30 → not_null ✓  FK→stg_products ✓
+      #      quantity    : 1–5 → not_null ✓
+      #      unit_price  : > 0 → not_null ✓
+      #      line_revenue: qty*unit_price*(1-discount); discount≤0.20 → > 0 → not_null ✓
+      #      loaded_at   : current_timestamp → not_null ✓
+      #
+      #    ── MART TESTS (marts/schema.yml) ─────────────────────────────────────
+      #    Data flows: stg_* → int_orders / int_order_items → mart_*
+      #
+      #    int_orders flag:  is_failed_order = status IN ('cancelled','returned')
+      #      → status is 'completed'/'shipped' only → is_failed_order = FALSE
+      #      → ALL 60 orders pass the WHERE NOT is_failed_order filter in every mart
+      #
+      #    mart_sales_daily  (← int_orders grouped by order_date)
+      #      order_date       : from stg_orders → not_null ✓
+      #      order_count      : count(distinct order_id) ≥ 1 → not_null ✓
+      #      total_revenue    : sum(total_amount) > 0 → not_null ✓  >= 0 ✓
+      #
+      #    mart_customer_summary  (← int_orders grouped by customer_id)
+      #      All 50 customers have ≥ 1 order:
+      #        i=1..49  → customer_ids 2..50
+      #        i=50     → customer_id  1
+      #        i=51..60 → customer_ids 2..11 (duplicates, still all covered)
+      #      customer_id  : one row per customer → not_null ✓  unique ✓
+      #      total_orders : count(distinct order_id) ≥ 1 → not_null ✓
+      #      lifetime_value: sum(total_amount) > 0 → not_null ✓
+      #
+      #    mart_product_performance  (← int_order_items grouped by product_id)
+      #      All 30 products have ≥ 1 order_item: product_id=(i%30)+1 covers 1–30
+      #      product_id   : one row per product → not_null ✓  unique ✓
+      #      total_revenue: sum(line_revenue) > 0 → not_null ✓
+      #      total_profit : sum(line_profit)  — may be negative (unit_price < cost_price
+      #                     is possible) but never NULL because both operands are
+      #                     not_null and the FK joins always match → not_null ✓
       # -----------------------------------------------------------------------
       - name: Generate and load CI seed data
         env:
@@ -158,10 +291,8 @@ jobs:
           PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
           python - <<'PYEOF'
-          import os, random, psycopg2
+          import os, psycopg2
           from datetime import datetime, timedelta
-
-          random.seed(42)
 
           conn = psycopg2.connect(
               host=os.environ["PGHOST"],
@@ -172,11 +303,16 @@ jobs:
           )
           cur = conn.cursor()
 
-          # --- customers (50 rows) -------------------------------------------
+          # --- staging.customers (50 rows) -----------------------------------
+          # segment cycles through all accepted_values except 'unknown'
+          # (unknown is optional; severity=warn so would not block CI anyway)
           segments = ["retail", "wholesale", "online", "enterprise"]
           customers = [
-              (i, f"Test User {i}", f"user{i}@example.com",
-               segments[i % len(segments)], "United States")
+              (i,
+               f"Test User {i}",
+               f"user{i}@example.com",        # unique email → source unique test ✓
+               segments[(i - 1) % len(segments)],
+               "United States")
               for i in range(1, 51)
           ]
           cur.executemany(
@@ -184,32 +320,38 @@ jobs:
               customers,
           )
 
-          # --- products (30 rows) --------------------------------------------
+          # --- staging.products (30 rows) ------------------------------------
+          # list_price > cost_price ensures stg_products.margin > 0 (not_null ✓)
           categories = ["Electronics", "Home", "Clothing", "Sports", "Books"]
-          products = []
-          for i in range(1, 31):
-              list_price = round(10 + i * 6.5, 2)
-              cost_price = round(list_price * 0.6, 2)
-              products.append((i, f"Product {i}", categories[i % len(categories)],
-                               list_price, cost_price))
+          products = [
+              (i,
+               f"Product {i}",
+               categories[(i - 1) % len(categories)],
+               round(10 + i * 6.5, 2),               # list_price (→ stg 'price')
+               round((10 + i * 6.5) * 0.6, 2))        # cost_price (always < list_price)
+              for i in range(1, 31)
+          ]
           cur.executemany(
               "INSERT INTO staging.products VALUES (%s,%s,%s,%s,%s)",
               products,
           )
 
-          # --- orders (60 rows) — all customer_ids in 1–50 -------------------
+          # --- staging.orders (60 rows) -------------------------------------
+          # order_date populated  → source not_null test ✓
+          # date_ordered NULL     → stg coalesce(order_date, date_ordered) uses order_date ✓
+          # status only 'completed'/'shipped' → stg accepted_values test ✓
+          # customer_id = (i%50)+1 stays within 1–50 → FK→customers ✓
           base_date = datetime(2025, 1, 1)
-          statuses = ["completed", "shipped"]
-          regions  = ["North", "South", "East", "West", "Central"]
-          # order_date=NULL, date_ordered=populated — coalesce(order_date, date_ordered) uses date_ordered
+          statuses  = ["completed", "shipped"]
+          regions   = ["North", "South", "East", "West", "Central"]
           orders = [
               (i,
-               (i % 50) + 1,                                   # customer_id 1–50
-               None,                                            # order_date (NULL)
-               (base_date + timedelta(days=i * 6)).strftime("%Y-%m-%d"),  # date_ordered
-               statuses[i % 2],
-               round(20 + i * 7.3, 2),
-               regions[i % len(regions)])
+               (i % 50) + 1,
+               (base_date + timedelta(days=i * 6)).strftime("%Y-%m-%d"),
+               None,
+               statuses[(i - 1) % 2],
+               round(20.0 + i * 7.3, 2),
+               regions[(i - 1) % len(regions)])
               for i in range(1, 61)
           ]
           cur.executemany(
@@ -217,14 +359,18 @@ jobs:
               orders,
           )
 
-          # --- order_items (120 rows, 2 per order) ---------------------------
+          # --- staging.order_items (120 rows, 2 per order) ------------------
+          # item_id   : 1–120, unique               → stg not_null ✓
+          # order_id  : ((i-1)//2)+1 → 1–60        → FK→orders ✓  stg not_null ✓
+          # product_id: (i%30)+1     → 1–30        → FK→products ✓ stg not_null ✓
+          # discount  : 0–0.20, never ≥ 1           → line_revenue > 0 ✓
           order_items = [
               (i,
-               ((i - 1) // 2) + 1,                             # order_id 1–60
-               (i % 30) + 1,                                   # product_id 1–30
-               (i % 5) + 1,                                    # quantity 1–5
-               round(5 + i * 3.1, 2),                          # unit_price
-               round((i % 5) * 0.05, 4))                       # discount 0–0.20
+               ((i - 1) // 2) + 1,
+               (i % 30) + 1,
+               (i % 5) + 1,
+               round(5.0 + i * 3.1, 2),
+               round((i % 5) * 0.05, 4))
               for i in range(1, 121)
           ]
           cur.executemany(
@@ -235,7 +381,7 @@ jobs:
           conn.commit()
           cur.close()
           conn.close()
-          print("CI seed data loaded: 50 customers, 30 products, 60 orders, 120 order_items.")
+          print("CI seed data loaded: 50 customers · 30 products · 60 orders · 120 order_items")
           PYEOF
 
       # -----------------------------------------------------------------------
@@ -246,11 +392,12 @@ jobs:
         run: dbt debug --profiles-dir .
 
       # -----------------------------------------------------------------------
-      # 9. Build the staging layer
+      # 9. Build all layers (staging → intermediate → marts) so every model
+      #    exists in the database before dbt test runs against it.
       # -----------------------------------------------------------------------
-      - name: dbt run — staging
+      - name: dbt run — all models
         working-directory: dbt_project
-        run: dbt run --select staging --profiles-dir .
+        run: dbt run --profiles-dir .
 
       # -----------------------------------------------------------------------
       # 10. Run all tests (continue so we can post results even on failure)
