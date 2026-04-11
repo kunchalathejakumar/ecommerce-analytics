@@ -85,48 +85,8 @@ jobs:
         run: dbt deps --profiles-dir .
 
       # -----------------------------------------------------------------------
-      # 6. Create schemas and source tables.
-      #
-      #    Schemas created:
-      #      staging          — raw source tables read by stg_* models
-      #      intermediate     — int_* models
-      #      marts            — mart_* models
-      #      dbt_test__audit  — failure rows written by dbt test --store-failures
-      #
-      #    Source table columns are derived from staging/schema.yml sources block:
-      #
-      #    staging.customers
-      #      customer_id  → source: not_null, unique
-      #      email        → source: not_null, unique
-      #      segment      → stg_customers model: accepted_values (warn)
-      #      name         → stg_customers model: not_null (initcap'd)
-      #      country      → stg_customers model: upper(country)
-      #
-      #    staging.orders
-      #      order_id        → source: not_null, unique
-      #      customer_id     → source: not_null, relationships(→customers.customer_id)
-      #      order_date      → source: not_null  |  stg_orders: coalesce(order_date, date_ordered)
-      #      date_ordered    → fallback for coalesce; NULL in CI (order_date is populated)
-      #      status          → stg_orders model: accepted_values ['completed','shipped']
-      #      total_amount    → source: not_null
-      #      shipping_region → stg_orders model: exposed as-is
-      #
-      #    staging.products
-      #      product_id  → source: not_null, unique
-      #      list_price  → source: not_null  |  stg_products maps to 'price'
-      #      cost_price  → source: not_null  |  stg_products: margin = list_price - cost_price
-      #      name        → stg_products model: maps to 'product_name' (not_null)
-      #      category    → stg_products model: lower(category)
-      #
-      #    staging.order_items
-      #      item_id     → stg_order_items model: not_null
-      #      order_id    → source: relationships(→orders.order_id)
-      #                     stg_order_items model: not_null, relationships(→stg_orders)
-      #      product_id  → source: not_null, relationships(→products.product_id)
-      #                     stg_order_items model: not_null, relationships(→stg_products)
-      #      quantity    → source + model: not_null
-      #      unit_price  → source + model: not_null
-      #      discount    → stg_order_items: line_revenue = qty * unit_price * (1 - discount)
+      # 6. Create schemas and source tables that mirror staging/schema.yml.
+      #    dbt_test__audit is needed by dbt test --store-failures.
       # -----------------------------------------------------------------------
       - name: Create schemas and source tables
         env:
@@ -187,100 +147,9 @@ jobs:
           EOSQL
 
       # -----------------------------------------------------------------------
-      # 7. Generate CI fixture data inline and load directly into staging.
-      #    The data/ folder is gitignored so no CSV files are available on the
-      #    runner. All values are chosen to satisfy every test across:
-      #      staging/schema.yml  (source + stg_* model tests)
-      #      marts/schema.yml    (mart_* model tests)
-      #
-      #    Volumes (CI speed):
-      #      50 customers · 30 products · 60 orders · 120 order_items (2/order)
-      #
-      #    ── STAGING SOURCE TESTS (staging/schema.yml: sources block) ──────────
-      #    staging.customers
-      #      customer_id : 1–50, no gaps    → not_null ✓  unique ✓
-      #      email       : user{i}@…        → not_null ✓  unique ✓
-      #
-      #    staging.orders
-      #      order_id    : 1–60             → not_null ✓  unique ✓
-      #      customer_id : (i%50)+1 → 1–50  → not_null ✓  FK→customers ✓
-      #      order_date  : populated        → not_null ✓
-      #      total_amount: > 0              → not_null ✓
-      #      order_items.order_id → orders.order_id  → relationships ✓
-      #
-      #    staging.products
-      #      product_id  : 1–30             → not_null ✓  unique ✓
-      #      list_price  : 10+i*6.5         → not_null ✓
-      #      cost_price  : 60% list_price   → not_null ✓
-      #      order_items.product_id → products.product_id → relationships ✓
-      #
-      #    staging.order_items
-      #      product_id  : (i%30)+1 → 1–30  → not_null ✓  FK→products ✓
-      #      quantity    : 1–5              → not_null ✓
-      #      unit_price  : > 0             → not_null ✓
-      #
-      #    ── STAGING MODEL TESTS (staging/schema.yml: models block) ───────────
-      #    stg_customers
-      #      customer_id : unique ✓  not_null ✓
-      #      name        : "Test User i" → initcap → not_null ✓
-      #      email       : lowercase, unique → not_null ✓  unique ✓
-      #      segment     : retail/wholesale/online/enterprise
-      #                    → lower() → accepted_values (severity:warn) ✓
-      #      loaded_at   : current_timestamp → not_null ✓
-      #
-      #    stg_orders
-      #      order_id    : unique ✓  not_null ✓
-      #      customer_id : FK→stg_customers 1–50 ✓  not_null ✓
-      #      order_date  : coalesce(order_date, date_ordered)=order_date → not_null ✓
-      #      status      : 'completed'/'shipped' → accepted_values ✓  not_null ✓
-      #      total_amount: > 0 → not_null ✓
-      #      loaded_at   : current_timestamp → not_null ✓
-      #
-      #    stg_products
-      #      product_id  : unique ✓  not_null ✓
-      #      product_name: initcap("Product i") → not_null ✓
-      #      price       : list_price > 0 → not_null ✓
-      #      cost_price  : 0.6*list → not_null ✓
-      #      margin      : list_price - cost_price = 0.4*list > 0 → not_null ✓
-      #      loaded_at   : current_timestamp → not_null ✓
-      #
-      #    stg_order_items
-      #      item_id     : 1–120 → not_null ✓
-      #      order_id    : 1–60 → not_null ✓  FK→stg_orders ✓
-      #      product_id  : 1–30 → not_null ✓  FK→stg_products ✓
-      #      quantity    : 1–5 → not_null ✓
-      #      unit_price  : > 0 → not_null ✓
-      #      line_revenue: qty*unit_price*(1-discount); discount≤0.20 → > 0 → not_null ✓
-      #      loaded_at   : current_timestamp → not_null ✓
-      #
-      #    ── MART TESTS (marts/schema.yml) ─────────────────────────────────────
-      #    Data flows: stg_* → int_orders / int_order_items → mart_*
-      #
-      #    int_orders flag:  is_failed_order = status IN ('cancelled','returned')
-      #      → status is 'completed'/'shipped' only → is_failed_order = FALSE
-      #      → ALL 60 orders pass the WHERE NOT is_failed_order filter in every mart
-      #
-      #    mart_sales_daily  (← int_orders grouped by order_date)
-      #      order_date       : from stg_orders → not_null ✓
-      #      order_count      : count(distinct order_id) ≥ 1 → not_null ✓
-      #      total_revenue    : sum(total_amount) > 0 → not_null ✓  >= 0 ✓
-      #
-      #    mart_customer_summary  (← int_orders grouped by customer_id)
-      #      All 50 customers have ≥ 1 order:
-      #        i=1..49  → customer_ids 2..50
-      #        i=50     → customer_id  1
-      #        i=51..60 → customer_ids 2..11 (duplicates, still all covered)
-      #      customer_id  : one row per customer → not_null ✓  unique ✓
-      #      total_orders : count(distinct order_id) ≥ 1 → not_null ✓
-      #      lifetime_value: sum(total_amount) > 0 → not_null ✓
-      #
-      #    mart_product_performance  (← int_order_items grouped by product_id)
-      #      All 30 products have ≥ 1 order_item: product_id=(i%30)+1 covers 1–30
-      #      product_id   : one row per product → not_null ✓  unique ✓
-      #      total_revenue: sum(line_revenue) > 0 → not_null ✓
-      #      total_profit : sum(line_profit)  — may be negative (unit_price < cost_price
-      #                     is possible) but never NULL because both operands are
-      #                     not_null and the FK joins always match → not_null ✓
+      # 7. Generate small inline CI fixture data (no CSV files — data/ is gitignored).
+      #    Actual dbt tests are defined in staging/schema.yml and marts/schema.yml
+      #    and executed by `dbt test` below.
       # -----------------------------------------------------------------------
       - name: Generate and load CI seed data
         env:
