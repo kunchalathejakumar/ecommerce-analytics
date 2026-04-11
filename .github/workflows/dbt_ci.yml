@@ -1,0 +1,406 @@
+name: dbt CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  pull-requests: write
+  contents: read
+
+# Force all JavaScript actions (checkout, cache, setup-python, github-script)
+# to run on Node.js 24 instead of the deprecated Node.js 20.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# ---------------------------------------------------------------------------
+# Job-level env: dbt profiles.yml reads these via env_var().
+# POSTGRES_HOST / POSTGRES_USER / POSTGRES_PASSWORD come from GitHub Secrets.
+# POSTGRES_PORT overrides the default 5433 in profiles.yml to match the
+# service container which listens on 5432.
+# ---------------------------------------------------------------------------
+jobs:
+  dbt-ci:
+    name: dbt Build & Test
+    runs-on: ubuntu-latest
+
+    env:
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ecommerce
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+
+    # -----------------------------------------------------------------------
+    # PostgreSQL 15 service container — credentials mirror the secrets above.
+    # -----------------------------------------------------------------------
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: ecommerce
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      # -----------------------------------------------------------------------
+      # 2. Python 3.13 (matches local dev environment)
+      # -----------------------------------------------------------------------
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.13"
+
+      # -----------------------------------------------------------------------
+      # 3. Cache pip to speed up subsequent runs
+      # -----------------------------------------------------------------------
+      - name: Cache pip dependencies
+        uses: actions/cache@v4.2.3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-dbt-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-dbt-
+
+      # -----------------------------------------------------------------------
+      # 4. Install dbt-postgres and psycopg2-binary
+      # -----------------------------------------------------------------------
+      - name: Install dbt-postgres and psycopg2-binary
+        run: pip install dbt-postgres==1.10.0 psycopg2-binary==2.9.11
+
+      # -----------------------------------------------------------------------
+      # 5. Install dbt packages (dbt_utils)
+      # -----------------------------------------------------------------------
+      - name: Install dbt packages
+        working-directory: dbt_project
+        run: dbt deps --profiles-dir .
+
+      # -----------------------------------------------------------------------
+      # 6. Create schemas and source tables that mirror staging/schema.yml.
+      #    dbt_test__audit is needed by dbt test --store-failures.
+      # -----------------------------------------------------------------------
+      - name: Create schemas and source tables
+        env:
+          PGHOST: ${{ secrets.POSTGRES_HOST }}
+          PGPORT: "5432"
+          PGDATABASE: ecommerce
+          PGUSER: ${{ secrets.POSTGRES_USER }}
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          psql <<'EOSQL'
+          CREATE SCHEMA IF NOT EXISTS staging;
+          CREATE SCHEMA IF NOT EXISTS intermediate;
+          CREATE SCHEMA IF NOT EXISTS marts;
+          CREATE SCHEMA IF NOT EXISTS dbt_test__audit;
+
+          -- source: customer_id(not_null,unique) | email(not_null,unique)
+          CREATE TABLE IF NOT EXISTS staging.customers (
+            customer_id  INTEGER  NOT NULL,
+            name         TEXT     NOT NULL,
+            email        TEXT     NOT NULL,
+            segment      TEXT     NOT NULL,
+            country      TEXT
+          );
+
+          -- source: order_id(not_null,unique) | customer_id(not_null,FK→customers)
+          --         order_date(not_null) | total_amount(not_null)
+          -- date_ordered kept for stg_orders coalesce(order_date, date_ordered)
+          CREATE TABLE IF NOT EXISTS staging.orders (
+            order_id        INTEGER       NOT NULL,
+            customer_id     INTEGER       NOT NULL,
+            order_date      DATE,
+            date_ordered    DATE,
+            status          TEXT,
+            total_amount    NUMERIC(12,2) NOT NULL,
+            shipping_region TEXT
+          );
+
+          -- source: product_id(not_null,unique) | list_price(not_null) | cost_price(not_null)
+          CREATE TABLE IF NOT EXISTS staging.products (
+            product_id  INTEGER       NOT NULL,
+            name        TEXT          NOT NULL,
+            category    TEXT,
+            list_price  NUMERIC(12,2) NOT NULL,
+            cost_price  NUMERIC(12,2) NOT NULL
+          );
+
+          -- source: product_id(not_null,FK→products) | quantity(not_null) | unit_price(not_null)
+          --         order_id(FK→orders)
+          -- item_id needed for stg_order_items.item_id not_null model test
+          CREATE TABLE IF NOT EXISTS staging.order_items (
+            item_id     INTEGER       NOT NULL,
+            order_id    INTEGER       NOT NULL,
+            product_id  INTEGER       NOT NULL,
+            quantity    INTEGER       NOT NULL,
+            unit_price  NUMERIC(12,2) NOT NULL,
+            discount    NUMERIC(8,4)  NOT NULL DEFAULT 0
+          );
+          EOSQL
+
+      # -----------------------------------------------------------------------
+      # 7. Generate small inline CI fixture data (no CSV files — data/ is gitignored).
+      #    Actual dbt tests are defined in staging/schema.yml and marts/schema.yml
+      #    and executed by `dbt test` below.
+      # -----------------------------------------------------------------------
+      - name: Generate and load CI seed data
+        env:
+          PGHOST: ${{ secrets.POSTGRES_HOST }}
+          PGPORT: "5432"
+          PGDATABASE: ecommerce
+          PGUSER: ${{ secrets.POSTGRES_USER }}
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          python - <<'PYEOF'
+          import os, psycopg2
+          from datetime import datetime, timedelta
+
+          conn = psycopg2.connect(
+              host=os.environ["PGHOST"],
+              port=os.environ["PGPORT"],
+              user=os.environ["PGUSER"],
+              password=os.environ["PGPASSWORD"],
+              dbname=os.environ["PGDATABASE"],
+          )
+          cur = conn.cursor()
+
+          # --- staging.customers (50 rows) -----------------------------------
+          # segment cycles through all accepted_values except 'unknown'
+          # (unknown is optional; severity=warn so would not block CI anyway)
+          segments = ["retail", "wholesale", "online", "enterprise"]
+          customers = [
+              (i,
+               f"Test User {i}",
+               f"user{i}@example.com",        # unique email → source unique test ✓
+               segments[(i - 1) % len(segments)],
+               "United States")
+              for i in range(1, 51)
+          ]
+          cur.executemany(
+              "INSERT INTO staging.customers VALUES (%s,%s,%s,%s,%s)",
+              customers,
+          )
+
+          # --- staging.products (30 rows) ------------------------------------
+          # list_price > cost_price ensures stg_products.margin > 0 (not_null ✓)
+          categories = ["Electronics", "Home", "Clothing", "Sports", "Books"]
+          products = [
+              (i,
+               f"Product {i}",
+               categories[(i - 1) % len(categories)],
+               round(10 + i * 6.5, 2),               # list_price (→ stg 'price')
+               round((10 + i * 6.5) * 0.6, 2))        # cost_price (always < list_price)
+              for i in range(1, 31)
+          ]
+          cur.executemany(
+              "INSERT INTO staging.products VALUES (%s,%s,%s,%s,%s)",
+              products,
+          )
+
+          # --- staging.orders (60 rows) -------------------------------------
+          # order_date populated  → source not_null test ✓
+          # date_ordered NULL     → stg coalesce(order_date, date_ordered) uses order_date ✓
+          # status only 'completed'/'shipped' → stg accepted_values test ✓
+          # customer_id = (i%50)+1 stays within 1–50 → FK→customers ✓
+          base_date = datetime(2025, 1, 1)
+          statuses  = ["completed", "shipped"]
+          regions   = ["North", "South", "East", "West", "Central"]
+          orders = [
+              (i,
+               (i % 50) + 1,
+               (base_date + timedelta(days=i * 6)).strftime("%Y-%m-%d"),
+               None,
+               statuses[(i - 1) % 2],
+               round(20.0 + i * 7.3, 2),
+               regions[(i - 1) % len(regions)])
+              for i in range(1, 61)
+          ]
+          cur.executemany(
+              "INSERT INTO staging.orders VALUES (%s,%s,%s,%s,%s,%s,%s)",
+              orders,
+          )
+
+          # --- staging.order_items (120 rows, 2 per order) ------------------
+          # item_id   : 1–120, unique               → stg not_null ✓
+          # order_id  : ((i-1)//2)+1 → 1–60        → FK→orders ✓  stg not_null ✓
+          # product_id: (i%30)+1     → 1–30        → FK→products ✓ stg not_null ✓
+          # discount  : 0–0.20, never ≥ 1           → line_revenue > 0 ✓
+          order_items = [
+              (i,
+               ((i - 1) // 2) + 1,
+               (i % 30) + 1,
+               (i % 5) + 1,
+               round(5.0 + i * 3.1, 2),
+               round((i % 5) * 0.05, 4))
+              for i in range(1, 121)
+          ]
+          cur.executemany(
+              "INSERT INTO staging.order_items VALUES (%s,%s,%s,%s,%s,%s)",
+              order_items,
+          )
+
+          conn.commit()
+          cur.close()
+          conn.close()
+          print("CI seed data loaded: 50 customers · 30 products · 60 orders · 120 order_items")
+          PYEOF
+
+      # -----------------------------------------------------------------------
+      # 8. Verify the dbt connection to the service container
+      # -----------------------------------------------------------------------
+      - name: dbt debug
+        working-directory: dbt_project
+        run: dbt debug --profiles-dir .
+
+      # -----------------------------------------------------------------------
+      # 9. Build all layers (staging → intermediate → marts) so every model
+      #    exists in the database before dbt test runs against it.
+      # -----------------------------------------------------------------------
+      - name: dbt run — all models
+        working-directory: dbt_project
+        run: dbt run --profiles-dir .
+
+      # -----------------------------------------------------------------------
+      # 10. Run all tests (continue so we can post results even on failure)
+      # -----------------------------------------------------------------------
+      - name: dbt test
+        id: dbt_test
+        working-directory: dbt_project
+        continue-on-error: true
+        run: dbt test --profiles-dir . --store-failures
+
+      # -----------------------------------------------------------------------
+      # 11. Parse run_results.json and write a markdown summary to GITHUB_OUTPUT
+      # -----------------------------------------------------------------------
+      - name: Parse dbt test results
+        id: parse_results
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os, sys
+
+          results_path = "dbt_project/target/run_results.json"
+          if not os.path.exists(results_path):
+              summary = "No dbt test results found — run may have failed before tests executed."
+              with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+                  fh.write(f"summary<<DELIM\n{summary}\nDELIM\n")
+                  fh.write("outcome=error\n")
+              sys.exit(0)
+
+          with open(results_path) as f:
+              data = json.load(f)
+
+          # Only count test nodes, not model run results
+          results = [
+              r for r in data.get("results", [])
+              if r.get("unique_id", "").startswith("test.")
+          ]
+
+          passed  = sum(1 for r in results if r["status"] == "pass")
+          failed  = sum(1 for r in results if r["status"] == "fail")
+          warned  = sum(1 for r in results if r["status"] == "warn")
+          errored = sum(1 for r in results if r["status"] == "error")
+          total   = len(results)
+
+          header_icon = "✅" if (failed == 0 and errored == 0) else "❌"
+          lines = [
+              f"## {header_icon} dbt Test Results",
+              "",
+              "| Status     | Count |",
+              "|------------|-------|",
+              f"| ✅ Passed   | {passed}  |",
+              f"| ❌ Failed   | {failed}  |",
+              f"| ⚠️  Warned   | {warned}  |",
+              f"| 🔴 Errored  | {errored} |",
+              f"| **Total**  | **{total}** |",
+              "",
+          ]
+
+          if failed > 0 or errored > 0:
+              lines += ["### Failing Tests", ""]
+              for r in results:
+                  if r["status"] in ("fail", "error"):
+                      name = r["unique_id"].split(".")[-1]
+                      lines.append(f"- `{name}` — **{r['status']}**")
+
+          summary = "\n".join(lines)
+          outcome = "failure" if (failed > 0 or errored > 0) else "success"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"summary<<DELIM\n{summary}\nDELIM\n")
+              fh.write(f"outcome={outcome}\n")
+
+          print(summary)
+          PYEOF
+
+      # -----------------------------------------------------------------------
+      # 12. Post (or update) a PR comment with the test-results table.
+      #     Uses SUMMARY env var to avoid backtick/interpolation issues.
+      # -----------------------------------------------------------------------
+      - name: Post PR comment with test results
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7.0.1
+        env:
+          SUMMARY: ${{ steps.parse_results.outputs.summary }}
+        with:
+          script: |
+            const summary = process.env.SUMMARY || "_No summary available._";
+            const runUrl  = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const body = [
+              summary,
+              "",
+              `> 🔗 [View full run logs](${runUrl})`,
+            ].join("\n");
+
+            // Upsert: update existing bot comment if present, otherwise create new one.
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(
+              c => c.user.type === "Bot" && c.body.includes("dbt Test Results")
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner:      context.repo.owner,
+                repo:       context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated existing comment #${existing.id}`);
+            } else {
+              await github.rest.issues.createComment({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+              core.info("Created new PR comment.");
+            }
+
+      # -----------------------------------------------------------------------
+      # 13. Fail the job explicitly if dbt tests failed (step 10 used
+      #     continue-on-error so we could always reach the comment step).
+      # -----------------------------------------------------------------------
+      - name: Fail job if dbt tests failed
+        if: steps.dbt_test.outcome == 'failure'
+        run: |
+          echo "::error::dbt tests reported failures. See PR comment for details."
+          exit 1
