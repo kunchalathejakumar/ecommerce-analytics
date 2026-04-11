@@ -114,6 +114,7 @@ jobs:
           CREATE TABLE IF NOT EXISTS staging.orders (
             order_id        INTEGER,
             customer_id     INTEGER,
+            order_date      DATE,
             date_ordered    DATE,
             status          TEXT,
             total_amount    NUMERIC(12, 2),
@@ -200,17 +201,19 @@ jobs:
           base_date = datetime(2025, 1, 1)
           statuses = ["completed", "shipped"]
           regions  = ["North", "South", "East", "West", "Central"]
+          # order_date=NULL, date_ordered=populated — coalesce(order_date, date_ordered) uses date_ordered
           orders = [
               (i,
                (i % 50) + 1,                                   # customer_id 1–50
-               (base_date + timedelta(days=i * 6)).strftime("%Y-%m-%d"),
+               None,                                            # order_date (NULL)
+               (base_date + timedelta(days=i * 6)).strftime("%Y-%m-%d"),  # date_ordered
                statuses[i % 2],
                round(20 + i * 7.3, 2),
                regions[i % len(regions)])
               for i in range(1, 61)
           ]
           cur.executemany(
-              "INSERT INTO staging.orders VALUES (%s,%s,%s,%s,%s,%s)",
+              "INSERT INTO staging.orders VALUES (%s,%s,%s,%s,%s,%s,%s)",
               orders,
           )
 
