@@ -50,13 +50,13 @@ jobs:
       # 1. Checkout
       # -----------------------------------------------------------------------
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       # -----------------------------------------------------------------------
       # 2. Python 3.13 (matches local dev environment)
       # -----------------------------------------------------------------------
       - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.13"
 
@@ -64,7 +64,7 @@ jobs:
       # 3. Cache pip to speed up subsequent runs
       # -----------------------------------------------------------------------
       - name: Cache pip dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v4.2.3
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-dbt-${{ hashFiles('requirements.txt') }}
@@ -478,7 +478,7 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Post PR comment with test results
         if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v7.0.1
         env:
           SUMMARY: ${{ steps.parse_results.outputs.summary }}
         with:
