@@ -9,6 +9,11 @@ permissions:
   pull-requests: write
   contents: read
 
+# Force all JavaScript actions (checkout, cache, setup-python, github-script)
+# to run on Node.js 24 instead of the deprecated Node.js 20.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # ---------------------------------------------------------------------------
 # Job-level env: dbt profiles.yml reads these via env_var().
 # POSTGRES_HOST / POSTGRES_USER / POSTGRES_PASSWORD come from GitHub Secrets.
