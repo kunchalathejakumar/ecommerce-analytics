@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+permissions:
+  pull-requests: write
+  contents: read
+
 # ---------------------------------------------------------------------------
 # Job-level env: dbt profiles.yml reads these via env_var().
 # POSTGRES_HOST / POSTGRES_USER / POSTGRES_PASSWORD come from GitHub Secrets.
@@ -135,11 +139,16 @@ jobs:
           EOSQL
 
       # -----------------------------------------------------------------------
-      # 7. Load raw CSV fixtures into the staging schema.
-      #    The orders CSV uses a "$" prefix on total_amount (e.g. "$368.59"),
-      #    so the Python loader strips that before insertion.
+      # 7. Generate small, self-contained CI fixture data and load it directly
+      #    into the staging schema. No local CSV files required — the data/
+      #    folder is gitignored and never pushed to GitHub.
+      #
+      #    Volumes are intentionally tiny (CI speed):
+      #      50 customers · 30 products · 60 orders · 120 order_items
+      #
+      #    All foreign keys are kept consistent so dbt relationship tests pass.
       # -----------------------------------------------------------------------
-      - name: Load CSV seed data into staging schema
+      - name: Generate and load CI seed data
         env:
           PGHOST: ${{ secrets.POSTGRES_HOST }}
           PGPORT: "5432"
@@ -148,7 +157,10 @@ jobs:
           PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
           python - <<'PYEOF'
-          import csv, os, re, psycopg2
+          import os, random, psycopg2
+          from datetime import datetime, timedelta
+
+          random.seed(42)
 
           conn = psycopg2.connect(
               host=os.environ["PGHOST"],
@@ -159,51 +171,68 @@ jobs:
           )
           cur = conn.cursor()
 
-          # customers
-          with open("data/raw/customers.csv") as f:
-              rows = list(csv.DictReader(f))
+          # --- customers (50 rows) -------------------------------------------
+          segments = ["retail", "wholesale", "online", "enterprise"]
+          customers = [
+              (i, f"Test User {i}", f"user{i}@example.com",
+               segments[i % len(segments)], "United States")
+              for i in range(1, 51)
+          ]
           cur.executemany(
-              "INSERT INTO staging.customers"
-              " VALUES (%(customer_id)s, %(name)s, %(email)s, %(segment)s, %(country)s)",
-              rows,
+              "INSERT INTO staging.customers VALUES (%s,%s,%s,%s,%s)",
+              customers,
           )
 
-          # products  (list_price / cost_price are plain numerics in the CSV)
-          with open("data/raw/products.csv") as f:
-              rows = list(csv.DictReader(f))
+          # --- products (30 rows) --------------------------------------------
+          categories = ["Electronics", "Home", "Clothing", "Sports", "Books"]
+          products = []
+          for i in range(1, 31):
+              list_price = round(10 + i * 6.5, 2)
+              cost_price = round(list_price * 0.6, 2)
+              products.append((i, f"Product {i}", categories[i % len(categories)],
+                               list_price, cost_price))
           cur.executemany(
-              "INSERT INTO staging.products"
-              " VALUES (%(product_id)s, %(name)s, %(category)s, %(list_price)s, %(cost_price)s)",
-              rows,
+              "INSERT INTO staging.products VALUES (%s,%s,%s,%s,%s)",
+              products,
           )
 
-          # orders  — strip leading "$" and "," from total_amount
-          with open("data/raw/orders.csv") as f:
-              rows = []
-              for row in csv.DictReader(f):
-                  row["total_amount"] = re.sub(r"[$,]", "", row["total_amount"])
-                  rows.append(row)
+          # --- orders (60 rows) — all customer_ids in 1–50 -------------------
+          base_date = datetime(2025, 1, 1)
+          statuses = ["completed", "shipped"]
+          regions  = ["North", "South", "East", "West", "Central"]
+          orders = [
+              (i,
+               (i % 50) + 1,                                   # customer_id 1–50
+               (base_date + timedelta(days=i * 6)).strftime("%Y-%m-%d"),
+               statuses[i % 2],
+               round(20 + i * 7.3, 2),
+               regions[i % len(regions)])
+              for i in range(1, 61)
+          ]
           cur.executemany(
-              "INSERT INTO staging.orders"
-              " VALUES (%(order_id)s, %(customer_id)s, %(date_ordered)s,"
-              "         %(status)s, %(total_amount)s, %(shipping_region)s)",
-              rows,
+              "INSERT INTO staging.orders VALUES (%s,%s,%s,%s,%s,%s)",
+              orders,
           )
 
-          # order_items
-          with open("data/raw/order_items.csv") as f:
-              rows = list(csv.DictReader(f))
+          # --- order_items (120 rows, 2 per order) ---------------------------
+          order_items = [
+              (i,
+               ((i - 1) // 2) + 1,                             # order_id 1–60
+               (i % 30) + 1,                                   # product_id 1–30
+               (i % 5) + 1,                                    # quantity 1–5
+               round(5 + i * 3.1, 2),                          # unit_price
+               round((i % 5) * 0.05, 4))                       # discount 0–0.20
+              for i in range(1, 121)
+          ]
           cur.executemany(
-              "INSERT INTO staging.order_items"
-              " VALUES (%(item_id)s, %(order_id)s, %(product_id)s,"
-              "         %(quantity)s, %(unit_price)s, %(discount)s)",
-              rows,
+              "INSERT INTO staging.order_items VALUES (%s,%s,%s,%s,%s,%s)",
+              order_items,
           )
 
           conn.commit()
           cur.close()
           conn.close()
-          print("Seed data loaded successfully.")
+          print("CI seed data loaded: 50 customers, 30 products, 60 orders, 120 order_items.")
           PYEOF
 
       # -----------------------------------------------------------------------
