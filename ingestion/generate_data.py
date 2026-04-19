@@ -15,6 +15,46 @@ from tqdm import tqdm
 # Must exceed the largest single-table row count in full mode (15M order_items).
 ID_RUN_STRIDE = 25_000_000
 
+# Realistic ecommerce product catalog: category -> adjectives + product types.
+# Names are generated as "{adjective} {type}" to produce varied, believable SKUs.
+ECOMMERCE_PRODUCT_CATALOG = {
+    "Electronics": {
+        "adjectives": ["Wireless", "Smart", "Portable", "HD", "Compact", "Pro", "Ultra", "Gaming", "Bluetooth", "Digital"],
+        "types": ["Headphones", "Speaker", "Tablet", "Laptop", "Monitor", "Keyboard", "Mouse", "Charger", "Camera", "Smart TV", "Earbuds", "Smartwatch", "Router", "SSD Drive", "Projector", "Webcam", "Drone"],
+    },
+    "Clothing & Apparel": {
+        "adjectives": ["Classic", "Slim Fit", "Casual", "Lightweight", "Fleece", "Stretch", "Vintage", "Organic Cotton", "Premium", "Relaxed Fit"],
+        "types": ["T-Shirt", "Jeans", "Hoodie", "Jacket", "Dress", "Shorts", "Joggers", "Polo Shirt", "Cardigan", "Blazer", "Leggings", "Sweatshirt", "Parka"],
+    },
+    "Home & Kitchen": {
+        "adjectives": ["Stainless Steel", "Non-Stick", "Ceramic", "Bamboo", "Silicone", "Cast Iron", "Glass", "Compact", "Electric", "Insulated"],
+        "types": ["Blender", "Coffee Maker", "Air Fryer", "Cutting Board", "Knife Set", "Cookware Set", "Electric Kettle", "Toaster", "Food Container", "Water Bottle", "Vacuum Cleaner"],
+    },
+    "Sports & Outdoors": {
+        "adjectives": ["Professional", "Lightweight", "Adjustable", "Waterproof", "Breathable", "Durable", "Foldable", "Performance", "Trail", "Anti-Slip"],
+        "types": ["Running Shoes", "Yoga Mat", "Resistance Bands", "Dumbbells", "Cycling Helmet", "Backpack", "Tennis Racket", "Jump Rope", "Fitness Tracker", "Trekking Poles"],
+    },
+    "Books": {
+        "adjectives": ["Illustrated", "Complete", "Essential", "Advanced", "Beginner's", "Classic", "Modern", "Ultimate", "Collector's Edition", "Revised"],
+        "types": ["Guide", "Handbook", "Workbook", "Novel", "Cookbook", "Biography", "Encyclopedia", "Journal", "Planner", "Reference Book"],
+    },
+    "Beauty & Personal Care": {
+        "adjectives": ["Organic", "Natural", "Hydrating", "Anti-Aging", "SPF 50", "Brightening", "Deep Cleansing", "Nourishing", "Vitamin C", "Sensitive Skin"],
+        "types": ["Face Wash", "Moisturizer", "Serum", "Shampoo", "Conditioner", "Sunscreen", "Lip Balm", "Eye Cream", "Body Lotion", "Toner", "Hair Mask"],
+    },
+    "Toys & Games": {
+        "adjectives": ["Educational", "Interactive", "Remote Control", "Magnetic", "Wooden", "Creative", "STEM", "Outdoor", "Classic", "3D"],
+        "types": ["Puzzle", "Building Blocks", "Board Game", "Action Figure", "Dollhouse", "Race Car Set", "Robot Kit", "Card Game", "Craft Kit", "Science Kit"],
+    },
+    "Health & Wellness": {
+        "adjectives": ["Organic", "Vegan", "Sugar-Free", "Probiotic", "Gluten-Free", "Plant-Based", "High Protein", "Natural", "Herbal", "Vitamin-Enriched"],
+        "types": ["Supplement", "Protein Powder", "Multivitamin", "Omega-3 Capsules", "Collagen Powder", "Herbal Tea", "Energy Bar", "Electrolyte Mix", "Probiotic", "Sleep Aid"],
+    },
+}
+
+# RFM-style customer segments common in ecommerce analytics.
+CUSTOMER_SEGMENTS = ["VIP", "Loyal", "Regular", "New", "At-Risk", "Bargain Hunter"]
+
 
 @dataclass
 class Volumes:
@@ -98,7 +138,7 @@ def generate_customers_csv(
     emails = np.array([faker.unique.email() for _ in range(n_rows)], dtype=object)
 
     segments = np.array(
-        [rng.choice(["Retail", "Wholesale", "Online", "Enterprise"]) for _ in range(n_rows)],
+        [rng.choice(CUSTOMER_SEGMENTS) for _ in range(n_rows)],
         dtype=object,
     )
     countries = np.array(["United States" for _ in range(n_rows)], dtype=object)
@@ -137,24 +177,18 @@ def generate_products_csv(
     rng = np.random.default_rng()
 
     product_ids = np.arange(id_base + 1, id_base + n_rows + 1)
-    names = np.array([faker.word().title() for _ in range(n_rows)], dtype=object)
 
-    base_categories = np.array(
+    catalog_categories = list(ECOMMERCE_PRODUCT_CATALOG.keys())
+    chosen_categories = [rng.choice(catalog_categories) for _ in range(n_rows)]
+    names = np.array(
         [
-            rng.choice(
-                [
-                    "Electronics",
-                    "Home",
-                    "Clothing",
-                    "Sports",
-                    "Accessories",
-                    "Books",
-                ]
-            )
-            for _ in range(n_rows)
+            f"{rng.choice(ECOMMERCE_PRODUCT_CATALOG[cat]['adjectives'])} "
+            f"{rng.choice(ECOMMERCE_PRODUCT_CATALOG[cat]['types'])}"
+            for cat in chosen_categories
         ],
         dtype=object,
     )
+    base_categories = np.array(chosen_categories, dtype=object)
 
     list_prices = np.round(
         rng.uniform(5.0, 500.0, size=n_rows).astype(float), 2
