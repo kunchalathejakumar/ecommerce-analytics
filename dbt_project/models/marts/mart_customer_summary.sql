@@ -89,4 +89,3 @@ left join customers c
     on co.customer_id = c.customer_id
 left join customer_item_metrics cim
     on co.customer_id = cim.customer_id
-order by co.lifetime_value desc

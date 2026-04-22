@@ -213,17 +213,18 @@ jobs:
           # --- staging.orders (60 rows) -------------------------------------
           # order_date populated  → source not_null test ✓
           # date_ordered NULL     → stg coalesce(order_date, date_ordered) uses order_date ✓
-          # status only 'completed'/'shipped' → stg accepted_values test ✓
+          # status: 'completed'/'shipped' for rows 1–56; 'cancelled'/'returned' for rows 57–60 → stg accepted_values test ✓
           # customer_id = (i%50)+1 stays within 1–50 → FK→customers ✓
           base_date = datetime(2025, 1, 1)
           statuses  = ["completed", "shipped"]
+          failed_statuses = ["cancelled", "returned"]
           regions   = ["North", "South", "East", "West", "Central"]
           orders = [
               (i,
                (i % 50) + 1,
                (base_date + timedelta(days=i * 6)).strftime("%Y-%m-%d"),
                None,
-               statuses[(i - 1) % 2],
+               failed_statuses[(i - 57) % 2] if i >= 57 else statuses[(i - 1) % 2],
                round(20.0 + i * 7.3, 2),
                regions[(i - 1) % len(regions)])
               for i in range(1, 61)

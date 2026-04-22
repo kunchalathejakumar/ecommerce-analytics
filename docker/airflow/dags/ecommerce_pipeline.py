@@ -2,14 +2,13 @@ import sys, os
 sys.path.insert(0, "/opt/airflow/project")
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from airflow import DAG
 from airflow.models import Variable
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
-from airflow.utils.dates import days_ago
 
 # Optional runtime overrides (Admin → Variables, or AIRFLOW_VAR_<KEY> in the worker env).
 # If unset, ingestion scripts use their CLI defaults (--output-dir data/generated, --max-quarantine-rate 0.05).
@@ -175,7 +174,7 @@ with DAG(
     default_args=default_args,
     # schedule_interval="0 6 * * *",
     schedule_interval=None,
-    start_date=days_ago(1),
+    start_date=datetime(2025, 1, 1),
     catchup=False,
 ) as dag:
     generate_data = PythonOperator(

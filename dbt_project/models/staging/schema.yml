@@ -97,7 +97,7 @@ models:
           - not_null
           - accepted_values:
               arguments:
-                values: ['completed', 'shipped']
+                values: ['completed', 'shipped', 'cancelled', 'returned']
       - name: total_amount
         description: Total monetary value of the order.
         data_tests:

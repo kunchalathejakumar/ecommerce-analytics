@@ -75,4 +75,3 @@ select
 from product_sales s
 left join products p
     on s.product_id = p.product_id
-order by s.total_revenue desc
