@@ -242,7 +242,7 @@ def generate_orders_and_items_csv(
     # Use a single unambiguous date format so Athena/Spark parsing is stable.
     date_strings = [d.strftime("%Y-%m-%d") for d in dates]
 
-    status_variants = ["completed", "shipped", "done"]
+    status_variants = ["completed", "shipped", "done", "cancelled", "returned"]
     statuses = np.array([rng.choice(status_variants) for _ in range(orders_n)], dtype=object)
 
     shipping_regions = np.array(

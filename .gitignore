@@ -1,5 +1,4 @@
 venv/
-.env
 data/
 __pycache__/
 *.pyc
@@ -10,8 +9,11 @@ dbt_project/logs/
 dbt_project/.user.yml
 commands.sh
 commands_usage.sh
-logs/athena/
-logs/dbt.log
+logs/
 *.png
 *.svg
 *.pbix
+.*
+!.gitignore
+!.github/
+!.env.example

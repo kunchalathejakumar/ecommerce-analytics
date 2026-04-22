@@ -1,0 +1,74 @@
+version: 2
+
+models:
+  - name: int_orders
+    description: Orders joined with customer attributes and enriched with time dimensions and business logic flags.
+    columns:
+      - name: order_id
+        description: Unique identifier for the order.
+        data_tests:
+          - not_null
+          - unique
+      - name: customer_id
+        description: Foreign key to stg_customers.
+        data_tests:
+          - not_null
+      - name: order_date
+        description: Date the order was placed.
+        data_tests:
+          - not_null
+      - name: status
+        description: Normalised order status.
+        data_tests:
+          - not_null
+      - name: total_amount
+        description: Total monetary value of the order.
+        data_tests:
+          - not_null
+      - name: is_failed_order
+        description: True for cancelled or returned orders; used to exclude them from mart aggregations.
+        data_tests:
+          - not_null
+      - name: order_value_tier
+        description: Bucketed order value (high/medium/low).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['high', 'medium', 'low']
+
+  - name: int_order_items
+    description: Order line items joined with product attributes and order/customer context, with derived profit metrics.
+    columns:
+      - name: order_id
+        description: Foreign key to int_orders.
+        data_tests:
+          - not_null
+      - name: item_id
+        description: Unique identifier for the line item.
+        data_tests:
+          - not_null
+      - name: product_id
+        description: Foreign key to stg_products.
+        data_tests:
+          - not_null
+      - name: quantity
+        description: Number of units ordered.
+        data_tests:
+          - not_null
+      - name: unit_price
+        description: Price per unit at time of purchase.
+        data_tests:
+          - not_null
+      - name: line_revenue
+        description: Revenue for this line after discount.
+        data_tests:
+          - not_null
+      - name: line_cost
+        description: Cost for this line (quantity * product cost_price).
+        data_tests:
+          - not_null
+      - name: is_failed_order
+        description: Inherited from int_orders; used to exclude failed orders from mart aggregations.
+        data_tests:
+          - not_null
