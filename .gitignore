@@ -15,4 +15,4 @@ logs/
 !.gitignore
 !.github/
 !.env.example
-!docs/screenshots/
+!docs/screenshots/**
