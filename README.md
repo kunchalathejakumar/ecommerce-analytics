@@ -101,7 +101,7 @@ ecommerce-analytics/
 │       │   ├── Customer Insights.png
 │       │   └── Pipeline Health.png
 │       └── airflow/
-│           └── Airflow_DAG.svg     # DAG graph export
+│           └── Airflow_DAG.png     # DAG graph export
 ├── .env.example                    # All required env vars with placeholder values
 ├── Makefile                        # make up / down / logs / ps / clean
 └── requirements.txt                # Full local dev dependency freeze (Python 3.13)
@@ -450,7 +450,7 @@ Full reference from `.env.example`:
 
 ### 🔄 Airflow DAG
 
-![Airflow DAG](docs/screenshots/airflow/Airflow_DAG.svg)
+![Airflow DAG](docs/screenshots/airflow/Airflow_DAG.png)
 
 *13-task DAG spanning data generation, S3 ingestion, Glue ETL (4 entities), crawler orchestration, Athena validation, staging load, and the full dbt transformation layer.*
 
