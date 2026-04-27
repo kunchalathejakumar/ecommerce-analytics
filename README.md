@@ -8,7 +8,7 @@ Apache Airflow runs inside Docker and orchestrates the full pipeline — from `g
 
 ## Architecture Overview
 
-![Architecture](docs/architecture/architecture.png)
+![Architecture](docs/architecture/architecture.svg)
 
 ## Tech Stack
 
