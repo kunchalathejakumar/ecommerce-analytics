@@ -10,6 +10,7 @@ logs/
 *.png
 *.svg
 *.pbix
+*.py
 .*
 
 !.gitignore

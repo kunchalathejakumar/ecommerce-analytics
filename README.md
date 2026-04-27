@@ -4,26 +4,11 @@
 
 End-to-end ecommerce analytics pipeline built on AWS (S3, Glue, Athena), dbt, PostgreSQL, and Apache Airflow.
 Covers every stage from synthetic data generation through cloud ETL, multi-layer SQL transformation, and Power BI reporting.
+Apache Airflow runs inside Docker and orchestrates the full pipeline — from `generate_data.py` through dbt mart builds.
 
 ## Architecture Overview
 
-```mermaid
-flowchart LR
-    A([generate_data.py]) --> B[(S3\nraw/)]
-    B --> C1[Glue ETL\ncustomers]
-    B --> C2[Glue ETL\nproducts]
-    B --> C3[Glue ETL\norders]
-    C1 & C2 & C3 --> C4[Glue ETL\norder_items]
-    C1 & C2 & C3 & C4 --> CW([CloudWatch\nMetrics])
-    C1 & C2 & C3 & C4 --> D[(S3\nprocessed/ + quarantine/)]
-    D --> E[Glue Crawlers\nraw + processed]
-    E --> F[Athena\nValidation]
-    F --> G[(PostgreSQL\nstaging)]
-    G --> H1[dbt staging\n4 views]
-    H1 --> H2[dbt intermediate\n2 views]
-    H2 --> H3[dbt marts\n3 tables]
-    H3 --> I([Power BI])
-```
+![Architecture](docs/architecture/architecture.png)
 
 ## Tech Stack
 
@@ -37,7 +22,7 @@ flowchart LR
 | Data Quality | Athena validation script + dbt tests | 5 Athena checks, not_null / unique / accepted_values / expression_is_true |
 | Transformation | dbt-postgres | 1.10.0 with dbt_utils 1.1.1 |
 | Orchestration | Apache Airflow | 2.8.0-python3.11 (Docker), 15-task DAG |
-| Serving | Power BI | 5 report pages: Executive Summary, Sales Trends, Product Performance, Customer Insights, Pipeline Health |
+| Visualization | Power BI | 5 report pages: Executive Summary, Sales Trends, Product Performance, Customer Insights, Pipeline Health |
 | CI/CD | GitHub Actions | PostgreSQL 15 service container, inline seed data, PR comment upsert |
 
 ## Project Structure
@@ -106,6 +91,50 @@ ecommerce-analytics/
 ├── Makefile                        # make up / down / logs / ps / clean
 └── requirements.txt                # Full local dev dependency freeze (Python 3.13)
 ```
+
+## Docker Setup
+
+Airflow (webserver + scheduler) and PostgreSQL run entirely inside Docker. No local Airflow or Postgres install is required.
+
+### Services
+
+| Service | Image | Port | Role |
+|---|---|---|---|
+| `postgres` | `postgres:15` | `5433` (host) / `5432` (internal) | Airflow metadata DB + analytics staging/marts schemas |
+| `airflow-init` | custom `Dockerfile` | — | One-shot: initialises Airflow DB and creates the default admin user |
+| `airflow-webserver` | custom `Dockerfile` | `8080` | Airflow UI |
+| `airflow-scheduler` | custom `Dockerfile` | — | DAG scheduling and task execution |
+
+### Custom Airflow Image (`docker/airflow/Dockerfile`)
+
+Base: `apache/airflow:2.8.0-python3.11`
+
+Additional layers:
+- **AWS CLI v2** — installed from the official binary bundle (`awscli-exe-linux-x86_64.zip`) so it does not conflict with Airflow's `boto3`/`botocore` pins.
+- **Python packages** — `boto3`, `pandas`, `psycopg2-binary`, `dbt-postgres`, `sqlalchemy`, and others from `docker/airflow/requirements.txt`.
+- **dbt profiles** — `docker/airflow/dbt_profiles.yml` is copied into the container; all connection values are injected via environment variables at runtime.
+
+### Volume Mounts
+
+| Host path | Container path | Purpose |
+|---|---|---|
+| `./docker/airflow/dags` | `/opt/airflow/dags` | DAG files |
+| `./docker/airflow/dbt_profiles.yml` | `/home/airflow/.dbt/profiles.yml` | dbt connection config |
+| `./dbt_project` | `/opt/airflow/dbt_project` | dbt models, macros, tests |
+| `./ingestion` | `/opt/airflow/ingestion` | Python ingestion scripts |
+| `./.env` | env_file | All secrets and configuration |
+
+### Starting the Stack
+
+```bash
+cp .env.example .env   # fill in all values
+make up                # docker compose up -d --build
+```
+
+Airflow UI is available at `http://localhost:8080` (default credentials: `admin` / `admin`).
+PostgreSQL is reachable at `localhost:5433` from the host and at `postgres:5432` from inside the Docker network.
+
+---
 
 ## Pipeline Deep-Dive
 
@@ -452,7 +481,7 @@ Full reference from `.env.example`:
 
 ![Airflow DAG](docs/screenshots/airflow/Airflow_DAG.png)
 
-*13-task DAG spanning data generation, S3 ingestion, Glue ETL (4 entities), crawler orchestration, Athena validation, staging load, and the full dbt transformation layer.*
+*15-task DAG spanning data generation, S3 ingestion, Glue ETL (4 entities), crawler orchestration, Athena validation, staging load, and the full dbt transformation layer.*
 
 ---
 
