@@ -485,4 +485,4 @@ Full reference from `.env.example`:
 
 ---
 
-Built by Theja Kumar Kunchala as Project 1 of a 5-project Data Engineering Portfolio.
+Built by Theja Kumar Kunchala
